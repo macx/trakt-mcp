@@ -17,7 +17,7 @@ your watch progress — from Claude on your phone, Claude Code, or any other MCP
 > "I just heard about *Severance* — put it on my watchlist."
 > "How many episodes of *Severance* do I have left?"
 
-It is deliberately **not** a wrapper around all of Trakt's 300+ endpoints. Nine
+It is deliberately **not** a wrapper around all of Trakt's 300+ endpoints. Ten
 focused tools keep the assistant's context small and its tool choices reliable.
 
 > **Status:** early (0.x), built for personal self-hosting. Provided as-is.
@@ -33,7 +33,8 @@ focused tools keep the assistant's context small and its tool choices reliable.
 | `get_show_progress` | Watched / aired / remaining episodes, next episode, per-season breakdown. |
 | `get_history` | What you watched most recently (movies and episodes). |
 | `get_up_next` | Shows you are in the middle of, with what is next. |
-| `mark_watched` | Record a watched movie or specific episodes (optionally with a date). |
+| `mark_watched` | Record watched movies, episodes, whole seasons or whole shows (now, a date, the air date, or unknown). |
+| `unmark_watched` | Remove all plays of movies, episodes, seasons or shows from the history (undo). |
 | `get_stats` | Lifetime totals: movies, episodes, hours. |
 
 All tools carry MCP annotations (`readOnlyHint`, `destructiveHint`, …) so clients can

@@ -10,24 +10,28 @@ from __future__ import annotations
 import functools
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
-from pydantic import BaseModel, Field
+from pydantic import Field, PositiveInt
 
 from trakt_mcp.models import (
+    EpisodeSelector,
     History,
     HistoryChange,
+    HistoryRemoval,
     ListChange,
     MediaRef,
     MediaType,
     SearchResult,
+    SeasonSelector,
     ShowProgress,
     UpNext,
+    WatchedItems,
     Watchlist,
     WatchStats,
 )
@@ -50,16 +54,11 @@ Manage the user's Trakt account: watchlist, watch progress and statistics.
 - To add or remove something, first call `search` and use the `trakt_id` of the
   matching result. If several results could match (remakes, same title in
   different years), ask the user which one they mean before changing anything.
-- `mark_watched` adds a play to the history; Trakt does not deduplicate plays,
-  so only call it when the user said they watched something.
+- `mark_watched` adds plays to the history; Trakt does not deduplicate plays,
+  so only call it when the user said they watched something. `unmark_watched`
+  removes all plays of an item and cannot be undone: confirm first.
 - Answer the user in their own language; titles may be returned in English.
 """
-
-
-class EpisodeWatch(BaseModel):
-    show_trakt_id: int = Field(gt=0, description="Trakt ID of the show.")
-    season: int = Field(ge=0)
-    episode: int = Field(ge=1)
 
 
 ServiceFor = Callable[[str], TraktService]
@@ -173,23 +172,77 @@ def register_tools(server: MCPServer, service_for: ServiceFor) -> None:
     )
     @trakt_errors
     async def mark_watched(
-        movie_trakt_ids: Annotated[list[int], Field(max_length=MAX_ITEMS_PER_CALL)] = [],  # noqa: B006
-        episodes: Annotated[list[EpisodeWatch], Field(max_length=MAX_ITEMS_PER_CALL)] = [],  # noqa: B006
+        movie_trakt_ids: Annotated[list[PositiveInt], Field(max_length=MAX_ITEMS_PER_CALL)] = [],  # noqa: B006
+        episodes: Annotated[list[EpisodeSelector], Field(max_length=MAX_ITEMS_PER_CALL)] = [],  # noqa: B006
+        seasons: Annotated[
+            list[SeasonSelector],
+            Field(max_length=MAX_ITEMS_PER_CALL, description="Whole seasons (all aired episodes)."),
+        ] = [],  # noqa: B006
+        show_trakt_ids: Annotated[
+            list[PositiveInt],
+            Field(max_length=MAX_ITEMS_PER_CALL, description="Whole shows (all aired episodes)."),
+        ] = [],  # noqa: B006
         watched_at: Annotated[
-            datetime | None, Field(description="When it was watched (ISO 8601); default now.")
+            datetime | Literal["released", "unknown"] | None,
+            Field(
+                description="When it was watched: an ISO 8601 time WITH timezone offset "
+                "(e.g. 2026-11-07T20:00:00+01:00), 'released' (each episode's air date; not "
+                "for movies), 'unknown', or omit for now."
+            ),
         ] = None,
     ) -> HistoryChange:
-        """Record that the user watched movies and/or specific episodes. Each call adds a
-        new play, so do not repeat it for the same viewing."""
-        if not movie_trakt_ids and not episodes:
-            raise ToolError("Pass at least one movie or episode.")
-        if any(mid <= 0 for mid in movie_trakt_ids):
-            raise ToolError("Movie IDs must be positive Trakt IDs.")
-        return await current_service().mark_watched(
-            movie_trakt_ids,
-            [(e.show_trakt_id, e.season, e.episode) for e in episodes],
-            watched_at,
+        """Record that the user watched movies, episodes, whole seasons or whole shows.
+        Every call adds new plays (Trakt does not deduplicate), so only call it once per
+        viewing, and confirm with the user before marking a whole season or show."""
+        items = WatchedItems(
+            movie_trakt_ids=movie_trakt_ids,
+            episodes=episodes,
+            seasons=seasons,
+            show_trakt_ids=show_trakt_ids,
         )
+        if items.is_empty():
+            raise ToolError("Pass at least one movie, episode, season or show.")
+        if watched_at == "released" and movie_trakt_ids:
+            raise ToolError("'released' only works for episodes, seasons and shows.")
+        if isinstance(watched_at, datetime):
+            if watched_at.tzinfo is None:
+                raise ToolError("Give watched_at with a timezone offset, e.g. +01:00.")
+            if watched_at > datetime.now(UTC):
+                raise ToolError("watched_at lies in the future.")
+        return await current_service().mark_watched(items, watched_at)
+
+    @server.tool(
+        title="Remove from watch history",
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True
+        ),
+    )
+    @trakt_errors
+    async def unmark_watched(
+        movie_trakt_ids: Annotated[list[PositiveInt], Field(max_length=MAX_ITEMS_PER_CALL)] = [],  # noqa: B006
+        episodes: Annotated[list[EpisodeSelector], Field(max_length=MAX_ITEMS_PER_CALL)] = [],  # noqa: B006
+        seasons: Annotated[list[SeasonSelector], Field(max_length=MAX_ITEMS_PER_CALL)] = [],  # noqa: B006
+        show_trakt_ids: Annotated[list[PositiveInt], Field(max_length=MAX_ITEMS_PER_CALL)] = [],  # noqa: B006
+    ) -> HistoryRemoval:
+        """Remove ALL plays of the given movies, episodes, seasons or shows from the
+        watch history (e.g. to undo a wrong `mark_watched`). This cannot be undone:
+        always confirm with the user first, especially for whole seasons or shows."""
+        items = WatchedItems(
+            movie_trakt_ids=movie_trakt_ids,
+            episodes=episodes,
+            seasons=seasons,
+            show_trakt_ids=show_trakt_ids,
+        )
+        if items.is_empty():
+            raise ToolError("Pass at least one movie, episode, season or show.")
+        whole = set(show_trakt_ids)
+        shows_with_parts = {s.show_trakt_id for s in seasons} | {e.show_trakt_id for e in episodes}
+        if whole & shows_with_parts:
+            raise ToolError(
+                "A show was given both as a whole show and with seasons/episodes. Removing "
+                "the whole show deletes its entire history; pass only what should be removed."
+            )
+        return await current_service().unmark_watched(items)
 
     @server.tool(title="Watch statistics", annotations=read_only)
     @trakt_errors

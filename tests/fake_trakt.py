@@ -265,19 +265,15 @@ class FakeTrakt:
                 entries = [e for e in entries if f"{e['type']}s" == kind]
             limit = int(query.get("limit", ["10"])[0])
             return httpx.Response(200, json=entries[:limit])
-        if method == "POST" and path == "/sync/history":
+        if method == "POST" and path in ("/sync/history", "/sync/history/remove"):
             body = json.loads(request.content)
             self.history.append(body)
-            episodes = sum(
-                len(s["episodes"]) for show in body.get("shows", []) for s in show["seasons"]
-            )
-            known_movies = [m for m in body.get("movies", []) if m["ids"]["trakt"] in MOVIES]
-            missing = [m for m in body.get("movies", []) if m["ids"]["trakt"] not in MOVIES]
+            movies, episodes, missing = self._count_history(body)
+            key = "deleted" if path.endswith("remove") else "added"
             return httpx.Response(
-                201,
+                200 if key == "deleted" else 201,
                 json={
-                    "added": {"movies": len(known_movies), "episodes": episodes},
-                    "updated": {"movies": 0, "episodes": 0},
+                    key: {"movies": movies, "episodes": episodes},
                     "not_found": {"movies": missing, "shows": [], "seasons": [], "episodes": []},
                 },
             )
@@ -291,6 +287,25 @@ class FakeTrakt:
                 },
             )
         return httpx.Response(404)
+
+    @staticmethod
+    def _count_history(body: dict[str, Any]) -> tuple[int, int, list[Any]]:
+        """Plays a history request touches: show 10 has seasons of 9 and 10 episodes."""
+        season_sizes = {1: 9, 2: 10}
+        movies = [m for m in body.get("movies", []) if m["ids"]["trakt"] in MOVIES]
+        missing = [m for m in body.get("movies", []) if m["ids"]["trakt"] not in MOVIES]
+        episodes = 0
+        for show in body.get("shows", []):
+            if "seasons" not in show:
+                episodes += sum(season_sizes.values())
+                continue
+            for season in show["seasons"]:
+                episodes += (
+                    len(season["episodes"])
+                    if "episodes" in season
+                    else season_sizes.get(season["number"], 0)
+                )
+        return len(movies), episodes, missing
 
     def _change_watchlist(self, body: dict[str, Any], remove: bool) -> httpx.Response:
         counts = {

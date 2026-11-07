@@ -1,6 +1,7 @@
 """Tool behaviour through the real MCP endpoint, against the fake Trakt."""
 
 import json
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from tests.conftest import McpSession
 from tests.fake_trakt import FakeTrakt
 from trakt_mcp.server import App
-from trakt_mcp.trakt.service import OVERVIEW_MAX_CHARS, escape_search_query
+from trakt_mcp.trakt.service import OVERVIEW_MAX_CHARS, escape_search_query, trakt_datetime
 
 
 def ok(result: dict[str, Any]) -> dict[str, Any]:
@@ -32,6 +33,7 @@ async def test_tool_list_is_lean_and_annotated(mcp: McpSession) -> None:
         "get_show_progress",
         "get_up_next",
         "get_history",
+        "unmark_watched",
         "mark_watched",
         "get_stats",
     }
@@ -176,9 +178,15 @@ async def test_mark_watched(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
             watched_at="2026-11-06T20:00:00Z",
         )
     )
-    assert result == {"added_movies": 1, "added_episodes": 2, "not_found": 1}
+    assert result == {
+        "added_movies": 1,
+        "added_episodes": 2,
+        "updated_movies": 0,
+        "updated_episodes": 0,
+        "not_found": 1,
+    }
     [body] = fake_trakt.history
-    assert body["movies"][0]["watched_at"] == "2026-11-06T20:00:00+00:00"
+    assert body["movies"][0]["watched_at"] == "2026-11-06T20:00:00.000Z"
     assert body["shows"] == [
         {
             "ids": {"trakt": 10},
@@ -186,8 +194,8 @@ async def test_mark_watched(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
                 {
                     "number": 2,
                     "episodes": [
-                        {"number": 3, "watched_at": "2026-11-06T20:00:00+00:00"},
-                        {"number": 4, "watched_at": "2026-11-06T20:00:00+00:00"},
+                        {"number": 3, "watched_at": "2026-11-06T20:00:00.000Z"},
+                        {"number": 4, "watched_at": "2026-11-06T20:00:00.000Z"},
                     ],
                 }
             ],
@@ -205,7 +213,8 @@ async def test_mark_watched_needs_something(mcp: McpSession) -> None:
 
 
 async def test_mark_watched_rejects_bad_ids(mcp: McpSession) -> None:
-    assert "positive" in error_text(await mcp.call("mark_watched", movie_trakt_ids=[-1]))
+    # Rejected by the input schema (PositiveInt) before reaching Trakt.
+    assert "greater_than" in error_text(await mcp.call("mark_watched", movie_trakt_ids=[-1]))
 
 
 async def test_stats(mcp: McpSession) -> None:
@@ -279,3 +288,138 @@ async def test_up_next_points_to_history_in_its_description(mcp: McpSession) -> 
     tools = (await mcp.rpc("tools/list")).json()["result"]["tools"]
     up_next = next(t for t in tools if t["name"] == "get_up_next")
     assert "get_history" in up_next["description"]
+
+
+async def test_mark_whole_season_and_show_with_unknown_date(
+    mcp: McpSession, fake_trakt: FakeTrakt
+) -> None:
+    result = ok(
+        await mcp.call(
+            "mark_watched", seasons=[{"show_trakt_id": 10, "season": 1}], watched_at="unknown"
+        )
+    )
+    assert result == {
+        "added_movies": 0,
+        "added_episodes": 9,
+        "updated_movies": 0,
+        "updated_episodes": 0,
+        "not_found": 0,
+    }
+    assert fake_trakt.history[-1]["shows"] == [
+        {"ids": {"trakt": 10}, "seasons": [{"number": 1, "watched_at": "unknown"}]}
+    ]
+
+    result = ok(await mcp.call("mark_watched", show_trakt_ids=[10], watched_at="released"))
+    assert result["added_episodes"] == 19
+    assert fake_trakt.history[-1]["shows"] == [{"ids": {"trakt": 10}, "watched_at": "released"}]
+
+
+async def test_whole_show_covers_its_seasons_and_episodes(
+    mcp: McpSession, fake_trakt: FakeTrakt
+) -> None:
+    ok(
+        await mcp.call(
+            "mark_watched",
+            show_trakt_ids=[10],
+            seasons=[{"show_trakt_id": 10, "season": 1}],
+            episodes=[{"show_trakt_id": 10, "season": 2, "episode": 1}],
+        )
+    )
+    assert fake_trakt.history[-1]["shows"] == [{"ids": {"trakt": 10}}]
+
+
+async def test_whole_season_covers_its_episodes(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
+    ok(
+        await mcp.call(
+            "mark_watched",
+            seasons=[{"show_trakt_id": 10, "season": 1}],
+            episodes=[
+                {"show_trakt_id": 10, "season": 1, "episode": 2},
+                {"show_trakt_id": 10, "season": 2, "episode": 4},
+            ],
+        )
+    )
+    assert fake_trakt.history[-1]["shows"] == [
+        {
+            "ids": {"trakt": 10},
+            "seasons": [{"number": 1}, {"number": 2, "episodes": [{"number": 4}]}],
+        }
+    ]
+
+
+async def test_released_is_rejected_for_movies(mcp: McpSession) -> None:
+    text = error_text(await mcp.call("mark_watched", movie_trakt_ids=[1], watched_at="released"))
+    assert "only works for episodes" in text
+
+
+async def test_invalid_watched_at_is_rejected(mcp: McpSession) -> None:
+    assert (await mcp.call("mark_watched", movie_trakt_ids=[1], watched_at="yesterday"))[
+        "isError"
+    ] is True
+
+
+async def test_mark_then_unmark_restores_the_history(
+    mcp: McpSession, fake_trakt: FakeTrakt
+) -> None:
+    ok(await mcp.call("mark_watched", movie_trakt_ids=[1]))
+    removed = ok(await mcp.call("unmark_watched", movie_trakt_ids=[1, 999]))
+    assert removed == {"removed_movies": 1, "removed_episodes": 0, "not_found": 1}
+    assert fake_trakt.requests[-1].url.path == "/sync/history/remove"
+    assert fake_trakt.history[-1] == {
+        "movies": [{"ids": {"trakt": 1}}, {"ids": {"trakt": 999}}],
+        "shows": [],
+    }
+
+
+async def test_unmark_whole_show_and_season(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
+    removed = ok(await mcp.call("unmark_watched", show_trakt_ids=[10]))
+    assert removed["removed_episodes"] == 19
+    removed = ok(await mcp.call("unmark_watched", seasons=[{"show_trakt_id": 10, "season": 2}]))
+    assert removed["removed_episodes"] == 10
+    assert "watched_at" not in json.dumps(fake_trakt.history[-1])
+
+
+async def test_unmark_needs_something(mcp: McpSession) -> None:
+    assert "at least one" in error_text(await mcp.call("unmark_watched"))
+
+
+async def test_unmark_is_marked_destructive(mcp: McpSession) -> None:
+    tools = (await mcp.rpc("tools/list")).json()["result"]["tools"]
+    unmark = next(t for t in tools if t["name"] == "unmark_watched")
+    assert unmark["annotations"]["destructiveHint"] is True
+    assert "cannot be undone" in unmark["description"]
+
+
+async def test_watched_at_is_sent_as_utc_with_z(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
+    ok(await mcp.call("mark_watched", movie_trakt_ids=[1], watched_at="2026-11-06T21:30:00+01:00"))
+    assert fake_trakt.history[-1]["movies"][0]["watched_at"] == "2026-11-06T20:30:00.000Z"
+
+
+async def test_watched_at_needs_a_timezone(mcp: McpSession) -> None:
+    text = error_text(
+        await mcp.call("mark_watched", movie_trakt_ids=[1], watched_at="2026-11-06T21:30:00")
+    )
+    assert "timezone" in text
+
+
+async def test_watched_at_in_the_future_is_rejected(mcp: McpSession) -> None:
+    text = error_text(
+        await mcp.call("mark_watched", movie_trakt_ids=[1], watched_at="2099-01-01T00:00:00Z")
+    )
+    assert "future" in text
+
+
+async def test_unmark_refuses_whole_show_mixed_with_its_episodes(mcp: McpSession) -> None:
+    text = error_text(
+        await mcp.call(
+            "unmark_watched",
+            show_trakt_ids=[10],
+            episodes=[{"show_trakt_id": 10, "season": 1, "episode": 1}],
+        )
+    )
+    assert "entire history" in text
+
+
+def test_trakt_datetime_rejects_naive_values() -> None:
+    with pytest.raises(ValueError, match="timezone"):
+        trakt_datetime(datetime(2026, 1, 1))

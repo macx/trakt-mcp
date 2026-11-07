@@ -106,9 +106,40 @@ class History(BaseModel):
     items: list[HistoryEntry] = Field(description="Most recent first.")
 
 
+class EpisodeSelector(BaseModel):
+    show_trakt_id: int = Field(gt=0, description="Trakt ID of the show.")
+    season: int = Field(ge=0, description="Season number (0 = specials).")
+    episode: int = Field(ge=1, description="Episode number within the season.")
+
+
+class SeasonSelector(BaseModel):
+    show_trakt_id: int = Field(gt=0, description="Trakt ID of the show.")
+    season: int = Field(ge=0, description="Season number (0 = specials).")
+
+
+class WatchedItems(BaseModel):
+    """What to mark or unmark: any mix of movies, episodes, whole seasons, whole shows."""
+
+    movie_trakt_ids: list[int] = Field(default_factory=list)
+    episodes: list[EpisodeSelector] = Field(default_factory=list)
+    seasons: list[SeasonSelector] = Field(default_factory=list)
+    show_trakt_ids: list[int] = Field(default_factory=list)
+
+    def is_empty(self) -> bool:
+        return not (self.movie_trakt_ids or self.episodes or self.seasons or self.show_trakt_ids)
+
+
 class HistoryChange(BaseModel):
     added_movies: int
     added_episodes: int
+    updated_movies: int = Field(default=0, description="Existing plays Trakt updated.")
+    updated_episodes: int = 0
+    not_found: int = Field(description="Number of requested items Trakt could not match.")
+
+
+class HistoryRemoval(BaseModel):
+    removed_movies: int = Field(description="Movie plays removed from the history.")
+    removed_episodes: int = Field(description="Episode plays removed from the history.")
     not_found: int = Field(description="Number of requested items Trakt could not match.")
 
 

@@ -9,8 +9,8 @@ defensively: unknown fields are ignored and missing optional fields become
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
-from datetime import datetime
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from trakt_mcp.models import (
@@ -18,6 +18,7 @@ from trakt_mcp.models import (
     History,
     HistoryChange,
     HistoryEntry,
+    HistoryRemoval,
     ListChange,
     MediaItem,
     MediaRef,
@@ -27,6 +28,7 @@ from trakt_mcp.models import (
     ShowProgress,
     UpNext,
     UpNextEntry,
+    WatchedItems,
     Watchlist,
     WatchlistEntry,
     WatchStats,
@@ -197,39 +199,30 @@ class TraktService:
         return UpNext(shows=shows[:limit])
 
     async def mark_watched(
-        self,
-        movie_ids: Iterable[int],
-        episodes: Iterable[tuple[int, int, int]],
-        watched_at: datetime | None,
+        self, items: WatchedItems, watched_at: datetime | str | None
     ) -> HistoryChange:
-        """Add plays to the history. ``episodes`` are ``(show_id, season, episode)`` tuples."""
-        when = watched_at.isoformat() if watched_at else None
-
-        def stamped(obj: dict[str, Any]) -> dict[str, Any]:
-            return {**obj, "watched_at": when} if when else obj
-
-        shows: dict[int, dict[int, list[dict[str, Any]]]] = {}
-        for show_id, season, number in episodes:
-            shows.setdefault(show_id, {}).setdefault(season, []).append(stamped({"number": number}))
-        body: dict[str, Any] = {
-            "movies": [stamped({"ids": {"trakt": mid}}) for mid in movie_ids],
-            "shows": [
-                {
-                    "ids": {"trakt": show_id},
-                    "seasons": [
-                        {"number": season, "episodes": eps} for season, eps in seasons.items()
-                    ],
-                }
-                for show_id, seasons in shows.items()
-            ],
-        }
-        data = await self._call("POST", "/sync/history", json=body)
-        added = data.get("added") or {}
-        not_found = data.get("not_found") or {}
+        """Add plays to the history (one per movie/episode; whole seasons/shows expand)."""
+        when = trakt_datetime(watched_at) if isinstance(watched_at, datetime) else watched_at
+        body = _history_body(items, when)
+        data = await self._call("POST", "/sync/history", json=body) or {}
+        added, updated = data.get("added") or {}, data.get("updated") or {}
         return HistoryChange(
             added_movies=int(added.get("movies", 0)),
             added_episodes=int(added.get("episodes", 0)),
-            not_found=sum(len(v) for v in not_found.values() if isinstance(v, list)),
+            updated_movies=int(updated.get("movies", 0)),
+            updated_episodes=int(updated.get("episodes", 0)),
+            not_found=_count_not_found(data),
+        )
+
+    async def unmark_watched(self, items: WatchedItems) -> HistoryRemoval:
+        """Remove *all* plays of the given items from the history."""
+        body = _history_body(items, None)
+        data = await self._call("POST", "/sync/history/remove", json=body) or {}
+        deleted = data.get("deleted") or {}
+        return HistoryRemoval(
+            removed_movies=int(deleted.get("movies", 0)),
+            removed_episodes=int(deleted.get("episodes", 0)),
+            not_found=_count_not_found(data),
         )
 
     async def stats(self) -> WatchStats:
@@ -278,6 +271,54 @@ def _episode(data: Any) -> EpisodeRef | None:
     return EpisodeRef(
         season=int(data["season"]), number=int(data["number"]), title=data.get("title")
     )
+
+
+def trakt_datetime(value: datetime) -> str:
+    """Trakt expects UTC timestamps with a ``Z`` suffix (``2026-11-07T20:00:00.000Z``)."""
+    if value.tzinfo is None:
+        raise ValueError("watched_at needs a timezone")
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _history_body(items: WatchedItems, when: str | None) -> dict[str, Any]:
+    """Build a /sync/history request body. A whole show covers its seasons and
+    episodes, and a whole season covers its episodes, so those are not repeated."""
+
+    def stamped(obj: dict[str, Any]) -> dict[str, Any]:
+        return {**obj, "watched_at": when} if when else obj
+
+    whole_shows = set(items.show_trakt_ids)
+    whole_seasons: dict[int, set[int]] = {}
+    for sel in items.seasons:
+        if sel.show_trakt_id not in whole_shows:
+            whole_seasons.setdefault(sel.show_trakt_id, set()).add(sel.season)
+    episodes: dict[int, dict[int, set[int]]] = {}
+    for ep in items.episodes:
+        if ep.show_trakt_id in whole_shows or ep.season in whole_seasons.get(ep.show_trakt_id, ()):
+            continue
+        episodes.setdefault(ep.show_trakt_id, {}).setdefault(ep.season, set()).add(ep.episode)
+
+    shows: list[dict[str, Any]] = [
+        stamped({"ids": {"trakt": show_id}}) for show_id in sorted(whole_shows)
+    ]
+    for show_id in sorted(set(whole_seasons) | set(episodes)):
+        seasons = [stamped({"number": n}) for n in sorted(whole_seasons.get(show_id, ()))]
+        seasons += [
+            {"number": n, "episodes": [stamped({"number": e}) for e in sorted(eps)]}
+            for n, eps in sorted(episodes.get(show_id, {}).items())
+        ]
+        shows.append({"ids": {"trakt": show_id}, "seasons": seasons})
+    return {
+        "movies": [
+            stamped({"ids": {"trakt": mid}}) for mid in dict.fromkeys(items.movie_trakt_ids)
+        ],
+        "shows": shows,
+    }
+
+
+def _count_not_found(data: Any) -> int:
+    not_found = (data or {}).get("not_found") or {}
+    return sum(len(v) for v in not_found.values() if isinstance(v, list))
 
 
 def _media_body(items: list[MediaRef]) -> dict[str, list[dict[str, Any]]]:
