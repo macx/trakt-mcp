@@ -1,0 +1,31 @@
+# Example deployment behind an existing reverse proxy (Caddy, Traefik, nginx).
+# No port is published: only the proxy, on the same Docker network, reaches it.
+services:
+  trakt-mcp:
+    image: trakt-mcp:latest
+    build: .
+    container_name: trakt-mcp
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - trakt-mcp-data:/data
+    networks: [proxy]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 128
+
+volumes:
+  trakt-mcp-data:
+
+networks:
+  proxy:
+    external: true
+    name: your-proxy-network
+
+# Caddy example:
+#   mcp.example.com {
+#       reverse_proxy trakt-mcp:8000
+#   }

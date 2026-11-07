@@ -1,0 +1,82 @@
+[project]
+name = "trakt-mcp"
+version = "0.1.4"
+description = "A lean, self-hosted MCP server that lets AI assistants manage your Trakt watchlist and read your watch progress."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.13"
+authors = [{ name = "David Eiken" }]
+dependencies = [
+    "mcp>=2.3,<3",
+    "httpx>=0.28,<1",
+    "pydantic>=2.11,<3",
+    "pydantic-settings>=2.10,<3",
+    "python-multipart>=0.0.20",
+    "uvicorn>=0.35,<1",
+]
+
+[project.scripts]
+trakt-mcp = "trakt_mcp.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "pytest-asyncio>=1.1",
+    "pytest-cov>=6.2",
+    "respx>=0.22",
+    "ruff>=0.12",
+    "mypy>=1.17",
+    "bandit>=1.8",
+    "pip-audit>=2.9",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trakt_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "B", "UP", "S", "C4", "SIM", "RET", "PTH", "N",
+    "ASYNC", "RUF", "PL", "TRY", "PERF",
+]
+ignore = [
+    "PLR0913", # MCP tool signatures legitimately take several parameters
+    "TRY003",  # descriptive exception messages are intended
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "PLR2004", "PLR0911", "PLR0915", "PLR0917"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+packages = ["trakt_mcp"]
+mypy_path = "src"
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "--strict-markers -ra"
+filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
+
+[tool.coverage.run]
+source = ["trakt_mcp"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "if __name__ == .__main__.:"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
