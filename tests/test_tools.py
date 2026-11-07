@@ -423,3 +423,20 @@ async def test_unmark_refuses_whole_show_mixed_with_its_episodes(mcp: McpSession
 def test_trakt_datetime_rejects_naive_values() -> None:
     with pytest.raises(ValueError, match="timezone"):
         trakt_datetime(datetime(2026, 1, 1))
+
+
+async def test_tool_calls_are_logged_with_their_arguments(
+    mcp: McpSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO", logger="trakt_mcp.tools")
+    await mcp.call("mark_watched", movie_trakt_ids=[1], watched_at="unknown")
+    assert any(
+        r.getMessage().startswith("tool mark_watched")
+        and '"watched_at": "unknown"' in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_unknown_date_is_sent_verbatim(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
+    ok(await mcp.call("mark_watched", movie_trakt_ids=[1], watched_at="unknown"))
+    assert fake_trakt.history[-1]["movies"] == [{"ids": {"trakt": 1}, "watched_at": "unknown"}]

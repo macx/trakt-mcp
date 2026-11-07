@@ -8,6 +8,7 @@ errors into short, actionable messages for the model.
 from __future__ import annotations
 
 import functools
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -17,7 +18,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
-from pydantic import Field, PositiveInt
+from pydantic import BaseModel, Field, PositiveInt
 
 from trakt_mcp.models import (
     EpisodeSelector,
@@ -77,6 +78,9 @@ def register_tools(server: MCPServer, service_for: ServiceFor) -> None:
     def trakt_errors[**P, R](fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
         @functools.wraps(fn)
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            # Arguments are Trakt IDs, titles and dates - no secrets - and make it
+            # possible to see what an assistant actually asked for.
+            logger.info("tool %s %s", fn.__name__, _summarise(kwargs))
             try:
                 return await fn(*args, **kwargs)
             except TraktError as exc:
@@ -185,9 +189,11 @@ def register_tools(server: MCPServer, service_for: ServiceFor) -> None:
         watched_at: Annotated[
             datetime | Literal["released", "unknown"] | None,
             Field(
-                description="When it was watched: an ISO 8601 time WITH timezone offset "
-                "(e.g. 2026-11-07T20:00:00+01:00), 'released' (each episode's air date; not "
-                "for movies), 'unknown', or omit for now."
+                description="When it was watched. 'unknown' when the user does not know or "
+                "says the date is unknown - never substitute a release date or guess one. An "
+                "ISO 8601 time WITH timezone offset (e.g. 2026-11-07T20:00:00+01:00) only when "
+                "the user gave a time. 'released' (each episode's air date; not for movies) "
+                "only when the user asks for it. Omit for 'now'."
             ),
         ] = None,
     ) -> HistoryChange:
@@ -249,6 +255,19 @@ def register_tools(server: MCPServer, service_for: ServiceFor) -> None:
     async def get_stats() -> WatchStats:
         """Lifetime statistics: movies and episodes watched and total watch time."""
         return await current_service().stats()
+
+
+def _summarise(arguments: dict[str, Any]) -> str:
+    def plain(value: Any) -> Any:
+        if isinstance(value, BaseModel):
+            return value.model_dump()
+        if isinstance(value, list):
+            return [plain(v) for v in value]
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return value
+
+    return json.dumps({k: plain(v) for k, v in arguments.items()}, ensure_ascii=False)[:500]
 
 
 async def _describe(exc: TraktError, current_service: Callable[[], TraktService]) -> str:
