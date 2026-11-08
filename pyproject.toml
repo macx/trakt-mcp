@@ -1,6 +1,6 @@
 [project]
 name = "trakt-mcp"
-version = "0.4.0"
+version = "0.4.1"
 description = "A lean, self-hosted MCP server that lets AI assistants manage your Trakt watchlist and read your watch progress."
 readme = "README.md"
 license = "MIT"

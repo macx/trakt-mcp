@@ -131,6 +131,11 @@ class PlaybackRemoval(BaseModel):
     not_found: list[int] = Field(
         default_factory=list, description="Playback IDs Trakt did not know (already removed?)."
     )
+    retry_later: list[int] = Field(
+        default_factory=list,
+        description="Not removed yet (rate limit or outage); retry these.",
+    )
+    retry_after_seconds: int | None = None
 
 
 class EpisodeSelector(BaseModel):

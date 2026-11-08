@@ -17,6 +17,8 @@ from typing import Any, cast
 # Keywords whose value maps *names* to schemas; a key "title" in there is a
 # property called title, not the title keyword.
 _SCHEMA_MAPS = frozenset({"properties", "$defs", "definitions", "patternProperties"})
+# Keywords whose value is data, not a schema: never rewritten.
+_DATA_KEYWORDS = frozenset({"default", "examples", "const", "enum"})
 _NULL = {"type": "null"}
 
 
@@ -34,7 +36,9 @@ def _compact(node: Any, *, output: bool) -> Any:
     for key, value in node.items():
         if (key == "title" and isinstance(value, str)) or (output and key == "default"):
             continue
-        if key in _SCHEMA_MAPS and isinstance(value, dict):
+        if key in _DATA_KEYWORDS:
+            compacted[key] = value
+        elif key in _SCHEMA_MAPS and isinstance(value, dict):
             compacted[key] = {name: _compact(sub, output=output) for name, sub in value.items()}
         else:
             compacted[key] = _compact(value, output=output)

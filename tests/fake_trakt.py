@@ -77,6 +77,9 @@ class FakeTrakt:
     refresh_calls: int = 0
     revoked: int = 0
     fail_next: int | None = None  # force the next API call to return this status
+    # Playback DELETEs that succeed before every further one fails with this status.
+    deletes_before_failure: int | None = None
+    delete_failure_status: int = 429
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -317,6 +320,10 @@ class FakeTrakt:
             entries = [e for e in self.playback if not rest or f"{e['type']}s" == rest]
             limit = int(query.get("limit", ["1000"])[0])
             return httpx.Response(200, json=entries[:limit])
+        if method == "DELETE" and self.deletes_before_failure is not None:
+            if self.deletes_before_failure <= 0:
+                return httpx.Response(self.delete_failure_status, headers={"Retry-After": "2"})
+            self.deletes_before_failure -= 1
         match = [e for e in self.playback if rest.isdigit() and e["id"] == int(rest)]
         if method != "DELETE" or not match:
             return httpx.Response(404)

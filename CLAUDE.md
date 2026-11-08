@@ -83,6 +83,20 @@ API used as an httpx transport. Extend the fake when you touch a new endpoint, a
 check request/response shapes against Trakt's official contracts at
 <https://github.com/trakt/api-help> (`projects/api/src/contracts/`).
 
+## Releases
+
+Every new version (bump `pyproject.toml` and `src/trakt_mcp/__init__.py`, then
+`uv lock`) needs, before it is deployed:
+
+1. All workflow checks green, locally and in CI.
+2. An **independent adversarial security review** of the diff since the last
+   cleared version: a reviewer that gets the diff, the code and `SECURITY.md`, not
+   our own conclusions. Fix the findings (with tests), and have the fixes re-checked.
+3. An entry in `docs/security-reviews.md` marking the version *cleared*, and a git
+   tag `vX.Y.Z` on the reviewed commit.
+
+Only versions marked cleared there may be deployed.
+
 ## Gotchas
 
 - MCP Python SDK **2.x**: `FastMCP` is now `mcp.server.mcpserver.MCPServer`; types live

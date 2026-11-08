@@ -205,7 +205,7 @@ def register_tools(server: MCPServer, service_for: ServiceFor) -> None:  # noqa:
     ) -> PlaybackRemoval:
         """Remove paused playbacks from "Continue watching" (e.g. a movie that was already
         watched elsewhere). Only the saved resume position is deleted; the watch history
-        and watchlist stay unchanged."""
+        and watchlist stay unchanged. Confirm with the user first; it cannot be undone."""
         return await current_service().remove_playback(playback_ids)
 
     @server.tool(

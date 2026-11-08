@@ -56,6 +56,17 @@ def test_defaults_are_dropped_only_from_output_schemas() -> None:
     assert "default" not in compact_schema(schema, output=True)["properties"]["limit"]
 
 
+def test_data_values_are_never_rewritten() -> None:
+    schema = {
+        "type": "object",
+        "default": {"title": "kept", "x": None},
+        "examples": [{"title": "kept"}],
+        "const": {"title": "kept"},
+        "enum": [{"title": "kept"}],
+    }
+    assert compact_schema(schema) == schema
+
+
 def test_input_is_not_mutated() -> None:
     schema = {"title": "X", "properties": {"a": {"title": "A", "type": "string"}}}
     compact_schema(schema, output=True)

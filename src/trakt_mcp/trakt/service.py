@@ -9,6 +9,7 @@ defensively: unknown fields are ignored and missing optional fields become
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -37,9 +38,15 @@ from trakt_mcp.models import (
     WatchlistEntry,
     WatchStats,
 )
-from trakt_mcp.trakt.errors import TraktNotFoundError
+from trakt_mcp.trakt.errors import (
+    TraktNotFoundError,
+    TraktRateLimitError,
+    TraktUnavailableError,
+)
 from trakt_mcp.trakt.http import TraktApi
 from trakt_mcp.trakt.sessions import TraktSessions
+
+logger = logging.getLogger(__name__)
 
 OVERVIEW_MAX_CHARS = 200
 _PLURAL: dict[MediaType, str] = {"movie": "movies", "show": "shows"}
@@ -81,12 +88,14 @@ class TraktService:
         if year is not None:
             params["years"] = year
         data = await self._call("GET", f"/search/{types}", params=params)
-        results = [
-            _media_item(entry["type"], entry[entry["type"]])
-            for entry in data or []
-            if entry.get("type") in _PLURAL and isinstance(entry.get(entry["type"]), dict)
-        ]
-        return SearchResult(results=results[:limit])
+
+        def parse(entry: dict[str, Any]) -> MediaItem | None:
+            media = entry.get("type")
+            if media not in _PLURAL or not isinstance(entry.get(media), dict):
+                return None
+            return _media_item(media, entry[media])
+
+        return SearchResult(results=_parse_each(data, parse)[:limit])
 
     # -- watchlist ----------------------------------------------------------
 
@@ -97,15 +106,20 @@ class TraktService:
             self._call("GET", "/users/settings"),
         )
         *lists, settings = responses
+
+        def parser(media: MediaType) -> Callable[[dict[str, Any]], WatchlistEntry | None]:
+            def parse(entry: dict[str, Any]) -> WatchlistEntry | None:
+                payload = entry.get(media)
+                if not isinstance(payload, dict):
+                    return None
+                item = _summary(media, payload)
+                return WatchlistEntry(**item.model_dump(), listed_at=entry.get("listed_at"))
+
+            return parse
+
         entries: list[WatchlistEntry] = []
         for media, raw in zip(types, lists, strict=True):
-            for entry in raw or []:
-                payload = entry.get(media)
-                if isinstance(payload, dict):
-                    item = _summary(media, payload)
-                    entries.append(
-                        WatchlistEntry(**item.model_dump(), listed_at=entry.get("listed_at"))
-                    )
+            entries += _parse_each(raw, parser(media))
         entries.sort(key=lambda e: e.listed_at or "", reverse=True)
         return Watchlist(
             items=entries[:limit],
@@ -157,51 +171,40 @@ class TraktService:
     async def history(self, kind: Literal["movies", "episodes"] | None, limit: int) -> History:
         path = f"/sync/history/{kind}" if kind else "/sync/history"
         data = await self._call("GET", path, params={"page": 1, "limit": limit})
-        items: list[HistoryEntry] = []
-        for entry in data or []:
-            kind_ = entry.get("type")
-            if kind_ == "movie" and isinstance(entry.get("movie"), dict):
-                movie = _summary("movie", entry["movie"])
-                items.append(
-                    HistoryEntry(
-                        watched_at=str(entry.get("watched_at", "")),
-                        type="movie",
-                        title=movie.title,
-                        year=movie.year,
-                        trakt_id=movie.trakt_id,
-                    )
-                )
-            elif kind_ == "episode" and isinstance(entry.get("show"), dict):
-                show = _summary("show", entry["show"])
-                items.append(
-                    HistoryEntry(
-                        watched_at=str(entry.get("watched_at", "")),
-                        type="episode",
-                        title=show.title,
-                        year=show.year,
-                        trakt_id=show.trakt_id,
-                        episode=_episode(entry.get("episode")),
-                    )
-                )
-        return History(items=items[:limit])
+
+        def parse(entry: dict[str, Any]) -> HistoryEntry | None:
+            media, episode = _watched_media(entry)
+            if media is None:
+                return None
+            return HistoryEntry(
+                watched_at=str(entry.get("watched_at") or ""),
+                type=entry["type"],
+                title=media.title,
+                year=media.year,
+                trakt_id=media.trakt_id,
+                episode=episode,
+            )
+
+        return History(items=_parse_each(data, parse)[:limit])
 
     async def up_next(self, limit: int) -> UpNext:
         data = await self._call("GET", "/sync/progress/up_next", params={"page": 1, "limit": limit})
-        shows: list[UpNextEntry] = []
-        for entry in data or []:
+
+        def parse(entry: dict[str, Any]) -> UpNextEntry | None:
+            if not isinstance(entry.get("show"), dict):
+                return None
             progress = entry.get("progress") or {}
             aired, watched = int(progress.get("aired", 0)), int(progress.get("completed", 0))
-            shows.append(
-                UpNextEntry(
-                    show=_summary("show", entry["show"]),
-                    watched_episodes=watched,
-                    aired_episodes=aired,
-                    remaining_episodes=max(aired - watched, 0),
-                    next_episode=_episode(progress.get("next_episode")),
-                    last_watched_at=progress.get("last_watched_at"),
-                )
+            return UpNextEntry(
+                show=_summary("show", entry["show"]),
+                watched_episodes=watched,
+                aired_episodes=aired,
+                remaining_episodes=max(aired - watched, 0),
+                next_episode=_episode(progress.get("next_episode")),
+                last_watched_at=progress.get("last_watched_at"),
             )
-        return UpNext(shows=shows[:limit])
+
+        return UpNext(shows=_parse_each(data, parse)[:limit])
 
     async def playback(
         self, kind: Literal["movies", "episodes"] | None, limit: int
@@ -209,41 +212,49 @@ class TraktService:
         """Paused, unfinished playbacks (what players show as "Continue watching")."""
         path = f"/sync/playback/{kind}" if kind else "/sync/playback"
         data = await self._call("GET", path, params={"page": 1, "limit": limit})
-        items: list[PlaybackEntry] = []
-        for entry in data or []:
-            kind_, playback_id = entry.get("type"), entry.get("id")
-            if not isinstance(playback_id, int):
-                continue
-            if kind_ == "movie" and isinstance(entry.get("movie"), dict):
-                media = _summary("movie", entry["movie"])
-                episode = None
-            elif kind_ == "episode" and isinstance(entry.get("show"), dict):
-                media = _summary("show", entry["show"])
-                episode = _episode(entry.get("episode"))
-            else:
-                continue
-            items.append(
-                PlaybackEntry(
-                    playback_id=playback_id,
-                    progress_percent=round(float(entry.get("progress") or 0), 1),
-                    paused_at=str(entry.get("paused_at", "")),
-                    type=kind_,
-                    title=media.title,
-                    year=media.year,
-                    trakt_id=media.trakt_id,
-                    episode=episode,
-                )
+
+        def parse(entry: dict[str, Any]) -> PlaybackEntry | None:
+            playback_id = entry.get("id")
+            media, episode = _watched_media(entry)
+            if media is None or not isinstance(playback_id, int) or isinstance(playback_id, bool):
+                return None
+            return PlaybackEntry(
+                playback_id=playback_id,
+                progress_percent=round(float(entry.get("progress") or 0), 1),
+                paused_at=str(entry.get("paused_at") or ""),
+                type=entry["type"],
+                title=media.title,
+                year=media.year,
+                trakt_id=media.trakt_id,
+                episode=episode,
             )
-        return PlaybackProgress(items=items[:limit])
+
+        return PlaybackProgress(items=_parse_each(data, parse)[:limit])
 
     async def remove_playback(self, playback_ids: list[int]) -> PlaybackRemoval:
-        """Delete paused playbacks one by one; unknown IDs are reported, not fatal."""
+        """Delete paused playbacks one by one; unknown IDs are reported, not fatal.
+
+        If Trakt rate-limits or fails after some deletions, the partial outcome is
+        returned (with the IDs still to do) instead of an error that would hide
+        what already changed. A failure before anything changed is raised as usual.
+        """
+        ids = list(dict.fromkeys(playback_ids))
         removed, not_found = 0, []
-        for playback_id in dict.fromkeys(playback_ids):
+        for index, playback_id in enumerate(ids):
             try:
                 await self._call("DELETE", f"/sync/playback/{playback_id}")
             except TraktNotFoundError:
                 not_found.append(playback_id)
+            except (TraktRateLimitError, TraktUnavailableError) as exc:
+                if not removed and not not_found:
+                    raise
+                retry_after = exc.retry_after if isinstance(exc, TraktRateLimitError) else None
+                return PlaybackRemoval(
+                    removed=removed,
+                    not_found=not_found,
+                    retry_later=ids[index:],
+                    retry_after_seconds=retry_after,
+                )
             else:
                 removed += 1
         return PlaybackRemoval(removed=removed, not_found=not_found)
@@ -297,6 +308,30 @@ class TraktService:
 
 def escape_search_query(query: str) -> str:
     return "".join(f"\\{ch}" if ch in _SEARCH_SPECIAL else ch for ch in query.strip())
+
+
+def _parse_each[T](entries: Any, parse: Callable[[dict[str, Any]], T | None]) -> list[T]:
+    """Parse a Trakt list, skipping entries of unknown or malformed shape, so one bad
+    entry cannot break the whole result."""
+    parsed: list[T] = []
+    for entry in entries if isinstance(entries, list) else []:
+        try:
+            item = parse(entry) if isinstance(entry, dict) else None
+        except (AttributeError, KeyError, TypeError, ValueError):
+            logger.warning("Skipping a malformed Trakt list entry")
+            continue
+        if item is not None:
+            parsed.append(item)
+    return parsed
+
+
+def _watched_media(entry: dict[str, Any]) -> tuple[MediaSummary | None, EpisodeRef | None]:
+    """The movie, or the show plus episode, of a history or playback entry."""
+    if entry.get("type") == "movie" and isinstance(entry.get("movie"), dict):
+        return _summary("movie", entry["movie"]), None
+    if entry.get("type") == "episode" and isinstance(entry.get("show"), dict):
+        return _summary("show", entry["show"]), _episode(entry.get("episode"))
+    return None, None
 
 
 def _summary(media: MediaType, data: dict[str, Any]) -> MediaSummary:

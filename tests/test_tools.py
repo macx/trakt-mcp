@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+import httpx
 import pytest
 
 from tests.conftest import McpSession
@@ -468,7 +469,7 @@ async def test_playback_filtered_by_type(mcp: McpSession, fake_trakt: FakeTrakt)
 
 async def test_remove_playback_keeps_history(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
     result = ok(await mcp.call("remove_playback", playback_ids=[500, 500]))
-    assert result == {"removed": 1, "not_found": []}
+    assert result == {"removed": 1, "not_found": [], "retry_later": [], "retry_after_seconds": None}
     deletes = [r for r in fake_trakt.requests if r.method == "DELETE"]
     assert [r.url.path for r in deletes] == ["/sync/playback/500"]  # duplicates sent once
     assert fake_trakt.history == []
@@ -478,7 +479,8 @@ async def test_remove_playback_keeps_history(mcp: McpSession, fake_trakt: FakeTr
 
 async def test_remove_playback_reports_unknown_ids(mcp: McpSession) -> None:
     result = ok(await mcp.call("remove_playback", playback_ids=[12345, 501]))
-    assert result == {"removed": 1, "not_found": [12345]}
+    assert result["removed"] == 1 and result["not_found"] == [12345]
+    assert result["retry_later"] == []
 
 
 async def test_remove_playback_surfaces_other_errors(
@@ -500,3 +502,102 @@ async def test_remove_playback_is_marked_destructive(mcp: McpSession) -> None:
     tools = (await mcp.rpc("tools/list")).json()["result"]["tools"]
     [tool] = [t for t in tools if t["name"] == "remove_playback"]
     assert tool["annotations"]["destructiveHint"] is True
+
+
+async def test_remove_playback_reports_partial_progress_when_rate_limited(
+    mcp: McpSession, fake_trakt: FakeTrakt
+) -> None:
+    fake_trakt.deletes_before_failure = 1
+    result = ok(await mcp.call("remove_playback", playback_ids=[500, 501, 12345]))
+    assert result["removed"] == 1
+    assert result["retry_later"] == [501, 12345]
+    assert result["retry_after_seconds"] == 2
+    assert [e["id"] for e in fake_trakt.playback] == [501, 499]
+
+
+async def test_remove_playback_rate_limited_before_any_change_is_an_error(
+    mcp: McpSession, fake_trakt: FakeTrakt
+) -> None:
+    fake_trakt.deletes_before_failure = 0
+    assert "rate limiting" in error_text(await mcp.call("remove_playback", playback_ids=[500]))
+    assert len(fake_trakt.playback) == 3
+
+
+async def test_remove_playback_partial_after_unknown_id_and_outage(
+    mcp: McpSession, fake_trakt: FakeTrakt
+) -> None:
+    # The unknown ID counts as progress: the outage on the second ID is not raised.
+    fake_trakt.deletes_before_failure, fake_trakt.delete_failure_status = 1, 503
+    result = ok(await mcp.call("remove_playback", playback_ids=[12345, 500]))
+    assert result == {
+        "removed": 0,
+        "not_found": [12345],
+        "retry_later": [500],
+        "retry_after_seconds": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "bad_entry",
+    [
+        {"id": 7, "type": "movie", "progress": 5, "paused_at": "x", "movie": {"title": "No ids"}},
+        {
+            "id": 7,
+            "type": "movie",
+            "progress": "lots",
+            "paused_at": "x",
+            "movie": {"ids": {"trakt": 1}},
+        },
+        {
+            "id": True,
+            "type": "movie",
+            "progress": 5,
+            "paused_at": "x",
+            "movie": {"ids": {"trakt": 1}},
+        },
+        {
+            "id": 7,
+            "type": "episode",
+            "progress": 5,
+            "show": {"ids": {"trakt": 10}},
+            "episode": {"season": "x"},
+        },
+        "not-an-object",
+    ],
+)
+async def test_one_malformed_playback_entry_does_not_break_the_list(
+    mcp: McpSession, fake_trakt: FakeTrakt, bad_entry: Any
+) -> None:
+    fake_trakt.playback.insert(0, bad_entry)
+    items = ok(await mcp.call("get_playback"))["items"]
+    assert [i["playback_id"] for i in items] == [501, 500]
+
+
+async def test_missing_paused_at_is_empty_not_none(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
+    fake_trakt.playback[1]["paused_at"] = None
+    items = ok(await mcp.call("get_playback"))["items"]
+    assert items[1]["paused_at"] == ""
+
+
+async def test_malformed_entries_are_skipped_in_other_lists(
+    mcp: McpSession, fake_trakt: FakeTrakt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = fake_trakt._api
+
+    def broken(request: Any, path: str, query: Any) -> Any:
+        response = original(request, path, query)
+        if request.method == "GET" and path in ("/sync/progress/up_next", "/sync/history"):
+            data = [*response.json(), {"type": "movie", "movie": {"title": "x"}}, {"show": None}, 3]
+            return httpx.Response(200, json=data)
+        if request.method == "GET" and path.startswith(("/search/", "/sync/watchlist/")):
+            return httpx.Response(
+                200, json=[*response.json(), {"type": "movie", "movie": {}}, None]
+            )
+        return response
+
+    monkeypatch.setattr(fake_trakt, "_api", broken)
+    ok(await mcp.call("add_to_watchlist", items=[{"type": "movie", "trakt_id": 1}]))
+    assert len(ok(await mcp.call("get_up_next"))["shows"]) == 1
+    assert len(ok(await mcp.call("get_history"))["items"]) == 2
+    assert len(ok(await mcp.call("search", query="dune"))["results"]) == 1
+    assert len(ok(await mcp.call("get_watchlist"))["items"]) == 1
