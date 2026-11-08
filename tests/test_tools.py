@@ -601,3 +601,20 @@ async def test_malformed_entries_are_skipped_in_other_lists(
     assert len(ok(await mcp.call("get_history"))["items"]) == 2
     assert len(ok(await mcp.call("search", query="dune"))["results"]) == 1
     assert len(ok(await mcp.call("get_watchlist"))["items"]) == 1
+
+
+async def test_all_entries_malformed_is_an_error_not_an_empty_list(
+    mcp: McpSession, fake_trakt: FakeTrakt, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_trakt.playback[:] = [{"id": n, "type": "movie", "movie": {"title": "x"}} for n in (1, 2)]
+    message = error_text(await mcp.call("get_playback"))
+    assert "unexpected format" in message
+    [record] = [r for r in caplog.records if "malformed" in r.getMessage()]
+    assert record.getMessage() == "Skipped 2 of 2 malformed Trakt list entries: KeyError x2"
+
+
+async def test_unknown_shapes_alone_still_give_an_empty_list(
+    mcp: McpSession, fake_trakt: FakeTrakt
+) -> None:
+    fake_trakt.playback[:] = [{"id": 1, "type": "season"}]  # not malformed, just not ours
+    assert ok(await mcp.call("get_playback"))["items"] == []

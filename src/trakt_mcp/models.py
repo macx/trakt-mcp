@@ -133,7 +133,7 @@ class PlaybackRemoval(BaseModel):
     )
     retry_later: list[int] = Field(
         default_factory=list,
-        description="Not removed yet (rate limit or outage); retry these.",
+        description="Not confirmed (rate limit or outage); retry these.",
     )
     retry_after_seconds: int | None = None
 

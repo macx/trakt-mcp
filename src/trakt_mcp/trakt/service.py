@@ -39,6 +39,7 @@ from trakt_mcp.models import (
     WatchStats,
 )
 from trakt_mcp.trakt.errors import (
+    TraktError,
     TraktNotFoundError,
     TraktRateLimitError,
     TraktUnavailableError,
@@ -312,16 +313,32 @@ def escape_search_query(query: str) -> str:
 
 def _parse_each[T](entries: Any, parse: Callable[[dict[str, Any]], T | None]) -> list[T]:
     """Parse a Trakt list, skipping entries of unknown or malformed shape, so one bad
-    entry cannot break the whole result."""
+    entry cannot break the whole result.
+
+    If Trakt returned entries but *every* one of them is malformed, the format has
+    changed (or our parser regressed): that is raised, never reported as an empty
+    list - an assistant would take it as "nothing there" and act on it.
+    """
     parsed: list[T] = []
-    for entry in entries if isinstance(entries, list) else []:
+    failures: dict[str, int] = {}
+    raw = entries if isinstance(entries, list) else []
+    for entry in raw:
         try:
             item = parse(entry) if isinstance(entry, dict) else None
-        except (AttributeError, KeyError, TypeError, ValueError):
-            logger.warning("Skipping a malformed Trakt list entry")
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            failures[type(exc).__name__] = failures.get(type(exc).__name__, 0) + 1
             continue
         if item is not None:
             parsed.append(item)
+    if failures:
+        logger.warning(
+            "Skipped %d of %d malformed Trakt list entries: %s",
+            sum(failures.values()),
+            len(raw),
+            ", ".join(f"{name} x{count}" for name, count in sorted(failures.items())),
+        )
+        if not parsed:
+            raise TraktError("Trakt returned a response in an unexpected format.")
     return parsed
 
 

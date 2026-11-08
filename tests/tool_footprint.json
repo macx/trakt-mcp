@@ -2,8 +2,8 @@
   "_summary": {
     "tools": 12,
     "server_instructions": 834,
-    "total_chars": 18213,
-    "approx_tokens": 4553
+    "total_chars": 18211,
+    "approx_tokens": 4552
   },
   "tools": {
     "add_to_watchlist": {
@@ -63,8 +63,8 @@
     "remove_playback": {
       "description": 240,
       "input_schema": 225,
-      "output_schema": 427,
-      "total": 1113
+      "output_schema": 425,
+      "total": 1111
     },
     "search": {
       "description": 78,
