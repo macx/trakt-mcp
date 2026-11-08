@@ -86,6 +86,40 @@ Everything the server advertises or returns ends up in the assistant's context, 
 `tests/test_tool_footprint.py` makes every change to the tool list visible; see
 "Context footprint" in `CLAUDE.md`.
 
+### Evaluated, not adopted (2026-11)
+
+- **TOON** (Token-Oriented Object Notation) for the text copy of results.
+  Measured on realistic results (50 watchlist entries, 10 history entries, …) with
+  `@toon-format/toon` 4.4.0 and the `o200k_base` tokenizer as a proxy (no Claude
+  tokenizer available offline), against the compact JSON we send:
+
+  | Result | compact JSON | TOON | TOON, flat episode fields |
+  |---|---|---|---|
+  | `get_watchlist` | 2119 | 1526 (−28 %) | – |
+  | `get_up_next` | 810 | 464 (−43 %) | – |
+  | `search` | 311 | 238 (−23 %) | – |
+  | `get_history` | 528 | 630 (+19 %) | 366 (−31 %) |
+  | `get_playback` | 379 | 455 (+20 %) | 258 (−32 %) |
+
+  TOON only pays off for uniform rows; the optional nested `episode` makes it
+  *larger* unless episodes are flattened (`season`, `episode`, `episode_title`),
+  which in turn makes plain JSON slightly larger. Not adopted because: the absolute
+  savings are small (typically 100-600 tokens per call, versus ~4.5k for the tool
+  list in every chat); it is unknown whether a given client feeds the model the text
+  copy or `structuredContent` (which must stay JSON); a 2026 study reports accuracy
+  drops of up to 9 points against JSON; and Apify removed TOON from its MCP server
+  after a 30-day production trial without a reliable benefit
+  (<https://aaif.io/blog/we-added-toon-to-our-mcp-server-then-removed-it>). Worth
+  revisiting if results grow (larger lists) or clients document which copy they use;
+  measure with the client's real tokenizer first.
+- **Jev** (TypeSafe's decision-only model returning typed answers / yes-no
+  probabilities). It is a separate model call and does not shrink what the assistant
+  reads; our results are deterministic Trakt data, not generated text. The only
+  candidate - picking the right `search` hit server-side - would save ~250 tokens per
+  search, but remakes are told apart by year and date comparison is a documented Jev
+  weakness; a wrong pick would change the watchlist without the user being asked. It
+  would also add an external API key and send queries to a third party.
+
 ## Reference
 
 Trakt's official, typed API contracts: <https://github.com/trakt/api-help>.
