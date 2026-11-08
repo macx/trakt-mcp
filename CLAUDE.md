@@ -15,6 +15,32 @@ first. Security model: `SECURITY.md`.
   happy path, and an independent security review before merging.
 - English for code, comments, docs and commit messages.
 
+## Context footprint
+
+Every tool's description and schemas sit in the assistant's context in *every*
+chat, used or not, and every tool result adds to it. The assistant should only
+consume what the task at hand needs. There is deliberately no hard limit on the
+number or size of tools; instead **every new or changed tool is reviewed** for
+how to keep it small. `tests/test_tool_footprint.py` enforces the review: it fails
+on any change to the tool list until `tests/tool_footprint.json` is regenerated
+(`UPDATE_TOOL_FOOTPRINT=1 uv run pytest tests/test_tool_footprint.py`).
+
+Checklist before regenerating the snapshot:
+
+1. **No new tool if a parameter will do.** Extend an existing tool when the
+   intent is the same (`mark_watched` covers movies, episodes, seasons, shows).
+2. **Descriptions:** one or two sentences on *when* to use the tool (and when
+   not); do not repeat what the schema already says.
+3. **Inputs:** as few parameters as possible, sensible defaults, enums instead
+   of free text.
+4. **Outputs:** only fields the assistant needs to answer or to call the next
+   tool; reuse existing models; field descriptions only where a name is
+   ambiguous; long text is truncated (see `OVERVIEW_MAX_CHARS`).
+5. **Results at runtime:** small default `limit`s, never raw Trakt payloads.
+6. **Server instructions** only for rules that span several tools.
+7. Note the footprint before/after (chars from the test output) in the commit
+   message.
+
 ## Design decisions (do not undo without discussing)
 
 - **Device flow, not redirect flow.** Trakt only issues *development* apps to
