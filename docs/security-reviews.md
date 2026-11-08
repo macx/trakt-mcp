@@ -6,7 +6,7 @@ versions marked *cleared* here may be deployed.
 
 | Version | Date | Scope (diff) | Result |
 |---|---|---|---|
-| 0.4.1 | 2026-11-08 | `f0c74a3..v0.4.1` (0.2.1 → 0.4.1: playback tools, `LeanMCPServer`, schema compaction, `MediaSummary`) | pending re-review of the fixes |
+| 0.4.1 | 2026-11-08 | `f0c74a3..v0.4.1` (0.2.1 → 0.4.1: playback tools, `LeanMCPServer`, schema compaction, `MediaSummary`) | **cleared** (tag `v0.4.1` = `4fcf3b1`) |
 
 ## 0.2.1 → 0.4.1 (2026-11-08)
 
@@ -24,6 +24,26 @@ No critical, high or medium findings. Findings on 0.4.0 and their fixes in 0.4.1
    `const`, `enum`). Fixed: those values are never rewritten.
 4. **Info** - `remove_playback` did not ask for confirmation. Fixed: its description
    now asks to confirm with the user first.
+
+Re-review of the fixes (`d2661ee..5092e11`): all four fixed. New finding:
+
+5. **Low** - the broad `except` in `_parse_each` turned a Trakt format change or a
+   parser regression into a silently *empty* result, which an assistant would act
+   on (e.g. a duplicate `mark_watched`). Fixed in `4fcf3b1`: if entries came back
+   but none could be parsed, a `TraktError` is raised; skipped entries are logged
+   once per call (counts and exception types only, no content).
+
+Re-review of `5092e11..4fcf3b1`: fixed, no new issues. **Verdict: cleared.**
+
+Accepted residuals (reviewer did not object):
+
+- IDs use pydantic's lax integers (`true` → 1, `"5"` → 5), like every ID parameter;
+  a client gains nothing it could not get by sending the integer.
+- In `remove_playback`, errors other than rate limit/outage (auth, 403, other 4xx)
+  mid-loop still raise and hide deletions already made; rare, and a retry is safe
+  (already removed IDs come back as `not_found`).
+- A response that is not a list, or only non-objects, counts as "unknown shape" and
+  yields an empty result rather than an error.
 
 Checked without findings: path/parameter injection into Trakt URLs, cross-user
 access, request amplification, the `list_tools`/`call_tool` overrides (validation,
