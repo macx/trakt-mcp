@@ -16,8 +16,9 @@ your watch progress — from Claude on your phone, Claude Code, or any other MCP
 
 > "I just heard about *Severance* — put it on my watchlist."
 > "How many episodes of *Severance* do I have left?"
+> "I already watched *BlackBerry* - get it off my continue-watching list."
 
-It is deliberately **not** a wrapper around all of Trakt's 300+ endpoints. Ten
+It is deliberately **not** a wrapper around all of Trakt's 300+ endpoints. Twelve
 focused tools keep the assistant's context small and its tool choices reliable.
 
 > **Status:** early (0.x), built for personal self-hosting. Provided as-is.
@@ -35,6 +36,8 @@ focused tools keep the assistant's context small and its tool choices reliable.
 | `get_up_next` | Shows you are in the middle of, with what is next. |
 | `mark_watched` | Record watched movies, episodes, whole seasons or whole shows (now, a date, the air date, or unknown). |
 | `unmark_watched` | Remove all plays of movies, episodes, seasons or shows from the history (undo). |
+| `get_playback` | Paused, unfinished playbacks ("Continue watching") with their progress. |
+| `remove_playback` | Clear stale entries from "Continue watching"; history stays untouched. |
 | `get_stats` | Lifetime totals: movies, episodes, hours. |
 
 All tools carry MCP annotations (`readOnlyHint`, `destructiveHint`, …) so clients can

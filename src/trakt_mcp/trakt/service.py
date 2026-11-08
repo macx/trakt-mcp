@@ -23,6 +23,9 @@ from trakt_mcp.models import (
     MediaItem,
     MediaRef,
     MediaType,
+    PlaybackEntry,
+    PlaybackProgress,
+    PlaybackRemoval,
     SearchResult,
     SeasonProgress,
     ShowProgress,
@@ -33,6 +36,7 @@ from trakt_mcp.models import (
     WatchlistEntry,
     WatchStats,
 )
+from trakt_mcp.trakt.errors import TraktNotFoundError
 from trakt_mcp.trakt.http import TraktApi
 from trakt_mcp.trakt.sessions import TraktSessions
 
@@ -197,6 +201,51 @@ class TraktService:
                 )
             )
         return UpNext(shows=shows[:limit])
+
+    async def playback(
+        self, kind: Literal["movies", "episodes"] | None, limit: int
+    ) -> PlaybackProgress:
+        """Paused, unfinished playbacks (what players show as "Continue watching")."""
+        path = f"/sync/playback/{kind}" if kind else "/sync/playback"
+        data = await self._call("GET", path, params={"page": 1, "limit": limit})
+        items: list[PlaybackEntry] = []
+        for entry in data or []:
+            kind_, playback_id = entry.get("type"), entry.get("id")
+            if not isinstance(playback_id, int):
+                continue
+            if kind_ == "movie" and isinstance(entry.get("movie"), dict):
+                media = _media_item("movie", entry["movie"], with_overview=False)
+                episode = None
+            elif kind_ == "episode" and isinstance(entry.get("show"), dict):
+                media = _media_item("show", entry["show"], with_overview=False)
+                episode = _episode(entry.get("episode"))
+            else:
+                continue
+            items.append(
+                PlaybackEntry(
+                    playback_id=playback_id,
+                    progress_percent=round(float(entry.get("progress") or 0), 1),
+                    paused_at=str(entry.get("paused_at", "")),
+                    type=kind_,
+                    title=media.title,
+                    year=media.year,
+                    trakt_id=media.trakt_id,
+                    episode=episode,
+                )
+            )
+        return PlaybackProgress(items=items[:limit])
+
+    async def remove_playback(self, playback_ids: list[int]) -> PlaybackRemoval:
+        """Delete paused playbacks one by one; unknown IDs are reported, not fatal."""
+        removed, not_found = 0, []
+        for playback_id in dict.fromkeys(playback_ids):
+            try:
+                await self._call("DELETE", f"/sync/playback/{playback_id}")
+            except TraktNotFoundError:
+                not_found.append(playback_id)
+            else:
+                removed += 1
+        return PlaybackRemoval(removed=removed, not_found=not_found)
 
     async def mark_watched(
         self, items: WatchedItems, watched_at: datetime | str | None

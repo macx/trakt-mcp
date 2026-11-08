@@ -36,6 +36,8 @@ async def test_tool_list_is_lean_and_annotated(mcp: McpSession) -> None:
         "unmark_watched",
         "mark_watched",
         "get_stats",
+        "get_playback",
+        "remove_playback",
     }
     assert names["remove_from_watchlist"]["annotations"]["destructiveHint"] is True
     assert names["search"]["annotations"]["readOnlyHint"] is True
@@ -440,3 +442,61 @@ async def test_tool_calls_are_logged_with_their_arguments(
 async def test_unknown_date_is_sent_verbatim(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
     ok(await mcp.call("mark_watched", movie_trakt_ids=[1], watched_at="unknown"))
     assert fake_trakt.history[-1]["movies"] == [{"ids": {"trakt": 1}, "watched_at": "unknown"}]
+
+
+# -- playback ("continue watching") -------------------------------------------
+
+
+async def test_playback_lists_paused_items(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
+    items = ok(await mcp.call("get_playback"))["items"]
+    assert [(i["playback_id"], i["type"], i["title"]) for i in items] == [
+        (501, "episode", "Severance"),
+        (500, "movie", "Arrival"),
+    ]  # the malformed entry is skipped
+    assert items[0]["progress_percent"] == round(61.25, 1)
+    assert items[0]["episode"] == {"season": 2, "number": 3, "title": "Who Is Alive?"}
+    assert items[1]["episode"] is None and items[1]["trakt_id"] == 1
+    assert fake_trakt.requests[-1].url.path == "/sync/playback"
+
+
+async def test_playback_filtered_by_type(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
+    items = ok(await mcp.call("get_playback", type="movies", limit=5))["items"]
+    assert [i["title"] for i in items] == ["Arrival"]
+    request = fake_trakt.requests[-1]
+    assert request.url.path == "/sync/playback/movies" and request.url.params["limit"] == "5"
+
+
+async def test_remove_playback_keeps_history(mcp: McpSession, fake_trakt: FakeTrakt) -> None:
+    result = ok(await mcp.call("remove_playback", playback_ids=[500, 500]))
+    assert result == {"removed": 1, "not_found": []}
+    deletes = [r for r in fake_trakt.requests if r.method == "DELETE"]
+    assert [r.url.path for r in deletes] == ["/sync/playback/500"]  # duplicates sent once
+    assert fake_trakt.history == []
+    remaining = ok(await mcp.call("get_playback"))["items"]
+    assert [i["playback_id"] for i in remaining] == [501]
+
+
+async def test_remove_playback_reports_unknown_ids(mcp: McpSession) -> None:
+    result = ok(await mcp.call("remove_playback", playback_ids=[12345, 501]))
+    assert result == {"removed": 1, "not_found": [12345]}
+
+
+async def test_remove_playback_surfaces_other_errors(
+    mcp: McpSession, fake_trakt: FakeTrakt
+) -> None:
+    fake_trakt.fail_next = 503
+    assert "temporarily unavailable" in error_text(
+        await mcp.call("remove_playback", playback_ids=[500])
+    )
+    assert len(fake_trakt.playback) == 3
+
+
+@pytest.mark.parametrize("ids", [[], [0], [-1], ["x"], list(range(1, 22))])
+async def test_remove_playback_validates_input(mcp: McpSession, ids: list[Any]) -> None:
+    assert (await mcp.call("remove_playback", playback_ids=ids))["isError"] is True
+
+
+async def test_remove_playback_is_marked_destructive(mcp: McpSession) -> None:
+    tools = (await mcp.rpc("tools/list")).json()["result"]["tools"]
+    [tool] = [t for t in tools if t["name"] == "remove_playback"]
+    assert tool["annotations"]["destructiveHint"] is True

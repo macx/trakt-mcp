@@ -28,6 +28,8 @@ from trakt_mcp.models import (
     ListChange,
     MediaRef,
     MediaType,
+    PlaybackProgress,
+    PlaybackRemoval,
     SearchResult,
     SeasonSelector,
     ShowProgress,
@@ -58,6 +60,9 @@ Manage the user's Trakt account: watchlist, watch progress and statistics.
 - `mark_watched` adds plays to the history; Trakt does not deduplicate plays,
   so only call it when the user said they watched something. `unmark_watched`
   removes all plays of an item and cannot be undone: confirm first.
+- "Continue watching" in players and apps is Trakt's paused playback
+  (`get_playback`). A finished movie or episode can linger there after an old,
+  aborted viewing; `remove_playback` clears it without touching the history.
 - Answer the user in their own language; titles may be returned in English.
 """
 
@@ -65,7 +70,7 @@ Manage the user's Trakt account: watchlist, watch progress and statistics.
 ServiceFor = Callable[[str], TraktService]
 
 
-def register_tools(server: MCPServer, service_for: ServiceFor) -> None:
+def register_tools(server: MCPServer, service_for: ServiceFor) -> None:  # noqa: PLR0915 - a flat list of tool declarations
     """Register all tools on ``server``; ``service_for(subject)`` builds the Trakt service."""
 
     def current_service() -> TraktService:
@@ -167,6 +172,41 @@ def register_tools(server: MCPServer, service_for: ServiceFor) -> None:
         episodes and the next episode to watch. Not a watch history - use `get_history`
         for what was watched recently."""
         return await current_service().up_next(limit)
+
+    @server.tool(title="Continue watching", annotations=read_only)
+    @trakt_errors
+    async def get_playback(
+        type: Annotated[
+            Literal["movies", "episodes"] | None,
+            Field(description="Only movies or only episodes; default both."),
+        ] = None,
+        limit: Annotated[int, Field(ge=1, le=50)] = 20,
+    ) -> PlaybackProgress:
+        """Paused, unfinished playbacks with their progress - what players and apps show as
+        "Continue watching". Returns the `playback_id` needed by `remove_playback`."""
+        return await current_service().playback(type, limit)
+
+    @server.tool(
+        title="Remove from continue watching",
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=True
+        ),
+    )
+    @trakt_errors
+    async def remove_playback(
+        playback_ids: Annotated[
+            list[PositiveInt],
+            Field(
+                min_length=1,
+                max_length=MAX_ITEMS_PER_CALL,
+                description="`playback_id` values from `get_playback`.",
+            ),
+        ],
+    ) -> PlaybackRemoval:
+        """Remove paused playbacks from "Continue watching" (e.g. a movie that was already
+        watched elsewhere). Only the saved resume position is deleted; the watch history
+        and watchlist stay unchanged."""
+        return await current_service().remove_playback(playback_ids)
 
     @server.tool(
         title="Mark as watched",

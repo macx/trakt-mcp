@@ -48,6 +48,26 @@ class FakeTrakt:
     access_ttl: int = 86400
     watchlist: list[tuple[str, int, str]] = field(default_factory=list)
     history: list[dict[str, Any]] = field(default_factory=list)
+    playback: list[dict[str, Any]] = field(
+        default_factory=lambda: [
+            {
+                "progress": 61.25,
+                "paused_at": "2026-11-07T21:00:00.000Z",
+                "id": 501,
+                "type": "episode",
+                "episode": {"season": 2, "number": 3, "title": "Who Is Alive?"},
+                "show": SHOWS[10],
+            },
+            {
+                "progress": 0.4,
+                "paused_at": "2025-03-01T19:00:00.000Z",
+                "id": 500,
+                "type": "movie",
+                "movie": MOVIES[1],
+            },
+            {"progress": 10, "paused_at": "x", "id": 499, "type": "movie"},  # malformed
+        ]
+    )
     requests: list[httpx.Request] = field(default_factory=list)
     # device_code -> [user_code, status] with status pending|approved|denied|used
     devices: dict[str, list[str]] = field(default_factory=dict)
@@ -99,6 +119,9 @@ class FakeTrakt:
             if self.fail_next is not None:
                 status, self.fail_next = self.fail_next, None
                 return httpx.Response(status, headers={"Retry-After": "30"})
+            if url.path.startswith("/sync/playback"):
+                rest = url.path.removeprefix("/sync/playback").strip("/")
+                return self._playback(request.method, rest, parse_qs(url.query))
             return self._api(request, url.path, parse_qs(url.query))
         return httpx.Response(404)
 
@@ -287,6 +310,18 @@ class FakeTrakt:
                 },
             )
         return httpx.Response(404)
+
+    def _playback(self, method: str, rest: str, query: dict[str, list[str]]) -> httpx.Response:
+        """GET /sync/playback[/movies|/episodes] and DELETE /sync/playback/{id}."""
+        if method == "GET" and rest in ("", "movies", "episodes"):
+            entries = [e for e in self.playback if not rest or f"{e['type']}s" == rest]
+            limit = int(query.get("limit", ["1000"])[0])
+            return httpx.Response(200, json=entries[:limit])
+        match = [e for e in self.playback if rest.isdigit() and e["id"] == int(rest)]
+        if method != "DELETE" or not match:
+            return httpx.Response(404)
+        self.playback.remove(match[0])
+        return httpx.Response(204)
 
     @staticmethod
     def _count_history(body: dict[str, Any]) -> tuple[int, int, list[Any]]:

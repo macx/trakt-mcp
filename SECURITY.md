@@ -10,8 +10,8 @@ Please do **not** open a public issue. Use GitHub's private vulnerability report
 trakt-mcp is a single-tenant service you host for yourself (and perhaps family).
 It is reachable from the internet so that hosted AI clients can call it.
 
-Protected assets: the Trakt account(s) of allowlisted users (watchlist and history
-can be changed) and their Trakt tokens.
+Protected assets: the Trakt account(s) of allowlisted users (watchlist, history and
+paused playbacks can be changed) and their Trakt tokens.
 
 ### Controls
 

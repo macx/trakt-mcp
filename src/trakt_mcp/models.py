@@ -106,6 +106,28 @@ class History(BaseModel):
     items: list[HistoryEntry] = Field(description="Most recent first.")
 
 
+class PlaybackEntry(BaseModel):
+    playback_id: int = Field(description="ID of this paused playback, for `remove_playback`.")
+    progress_percent: float = Field(description="How far playback got before pausing (0-100).")
+    paused_at: str = Field(description="When playback was paused (UTC, ISO 8601).")
+    type: Literal["movie", "episode"]
+    title: str = Field(description="Movie title, or the show title for episodes.")
+    year: int | None = None
+    trakt_id: int = Field(description="Trakt ID of the movie or show.")
+    episode: EpisodeRef | None = Field(default=None, description="Set for episodes.")
+
+
+class PlaybackProgress(BaseModel):
+    items: list[PlaybackEntry] = Field(description="Most recently paused first.")
+
+
+class PlaybackRemoval(BaseModel):
+    removed: int = Field(description="Paused playbacks removed.")
+    not_found: list[int] = Field(
+        default_factory=list, description="Playback IDs Trakt did not know (already removed?)."
+    )
+
+
 class EpisodeSelector(BaseModel):
     show_trakt_id: int = Field(gt=0, description="Trakt ID of the show.")
     season: int = Field(ge=0, description="Season number (0 = specials).")
