@@ -22,6 +22,7 @@ from trakt_mcp.models import (
     ListChange,
     MediaItem,
     MediaRef,
+    MediaSummary,
     MediaType,
     PlaybackEntry,
     PlaybackProgress,
@@ -101,7 +102,7 @@ class TraktService:
             for entry in raw or []:
                 payload = entry.get(media)
                 if isinstance(payload, dict):
-                    item = _media_item(media, payload, with_overview=False)
+                    item = _summary(media, payload)
                     entries.append(
                         WatchlistEntry(**item.model_dump(), listed_at=entry.get("listed_at"))
                     )
@@ -131,12 +132,12 @@ class TraktService:
 
     async def show_progress(self, show_id: int) -> ShowProgress:
         show, progress = await asyncio.gather(
-            self._call("GET", f"/shows/{show_id}", params={"extended": "full"}),
+            self._call("GET", f"/shows/{show_id}"),
             self._call("GET", f"/shows/{show_id}/progress/watched"),
         )
         aired, watched = int(progress.get("aired", 0)), int(progress.get("completed", 0))
         return ShowProgress(
-            show=_media_item("show", show),
+            show=_summary("show", show),
             aired_episodes=aired,
             watched_episodes=watched,
             remaining_episodes=max(aired - watched, 0),
@@ -160,7 +161,7 @@ class TraktService:
         for entry in data or []:
             kind_ = entry.get("type")
             if kind_ == "movie" and isinstance(entry.get("movie"), dict):
-                movie = _media_item("movie", entry["movie"], with_overview=False)
+                movie = _summary("movie", entry["movie"])
                 items.append(
                     HistoryEntry(
                         watched_at=str(entry.get("watched_at", "")),
@@ -171,7 +172,7 @@ class TraktService:
                     )
                 )
             elif kind_ == "episode" and isinstance(entry.get("show"), dict):
-                show = _media_item("show", entry["show"], with_overview=False)
+                show = _summary("show", entry["show"])
                 items.append(
                     HistoryEntry(
                         watched_at=str(entry.get("watched_at", "")),
@@ -192,7 +193,7 @@ class TraktService:
             aired, watched = int(progress.get("aired", 0)), int(progress.get("completed", 0))
             shows.append(
                 UpNextEntry(
-                    show=_media_item("show", entry["show"], with_overview=False),
+                    show=_summary("show", entry["show"]),
                     watched_episodes=watched,
                     aired_episodes=aired,
                     remaining_episodes=max(aired - watched, 0),
@@ -214,10 +215,10 @@ class TraktService:
             if not isinstance(playback_id, int):
                 continue
             if kind_ == "movie" and isinstance(entry.get("movie"), dict):
-                media = _media_item("movie", entry["movie"], with_overview=False)
+                media = _summary("movie", entry["movie"])
                 episode = None
             elif kind_ == "episode" and isinstance(entry.get("show"), dict):
-                media = _media_item("show", entry["show"], with_overview=False)
+                media = _summary("show", entry["show"])
                 episode = _episode(entry.get("episode"))
             else:
                 continue
@@ -298,9 +299,18 @@ def escape_search_query(query: str) -> str:
     return "".join(f"\\{ch}" if ch in _SEARCH_SPECIAL else ch for ch in query.strip())
 
 
-def _media_item(media: MediaType, data: dict[str, Any], *, with_overview: bool = True) -> MediaItem:
+def _summary(media: MediaType, data: dict[str, Any]) -> MediaSummary:
+    return MediaSummary(
+        type=media,
+        title=str(data.get("title") or "Untitled"),
+        year=data.get("year"),
+        trakt_id=int((data.get("ids") or {})["trakt"]),
+    )
+
+
+def _media_item(media: MediaType, data: dict[str, Any]) -> MediaItem:
     ids = data.get("ids") or {}
-    overview = data.get("overview") if with_overview else None
+    overview = data.get("overview")
     if overview and len(overview) > OVERVIEW_MAX_CHARS:
         overview = overview[: OVERVIEW_MAX_CHARS - 1].rstrip() + "…"
     return MediaItem(

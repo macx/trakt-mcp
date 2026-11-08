@@ -6,7 +6,8 @@
 src/trakt_mcp/
 ├── __main__.py        CLI: serve (default), set-passphrase
 ├── config.py          Settings (env vars only) + redirect URI allowlist matching
-├── server.py          wiring: store → Trakt clients → auth provider → MCPServer → ASGI app
+├── server.py          wiring: store → Trakt clients → auth provider → LeanMCPServer → ASGI app
+├── schema.py          compacts the tool schemas advertised to the assistant
 ├── storage.py         SQLite: clients, pending logins, hashed grants, Trakt tokens
 ├── auth/provider.py   OAuth authorization server; device sign-in; consent
 ├── auth/passphrase.py owner passphrase (scrypt) that gates every sign-in
@@ -65,6 +66,25 @@ revokes all MCP tokens of that user, so the client is asked to sign in again.
 
 Streamable HTTP in stateless JSON mode (`/mcp`), so the server keeps no per-session
 state in memory and survives restarts transparently.
+
+## Context footprint
+
+Everything the server advertises or returns ends up in the assistant's context, so
+`LeanMCPServer` (in `server.py`) trims what carries no meaning for the model:
+
+- **Tool list:** `schema.compact_schema` drops pydantic's auto-generated `title`s,
+  turns `anyOf [X, null]` for scalars into `type: [X, "null"]`, and drops `default`s
+  from output schemas. Validation still uses the full models.
+- **Results:** the text copy of a structured result (for clients that only read
+  text) is compact JSON instead of the SDK's indented JSON - same data, roughly a
+  third smaller.
+- **Models:** nested movies/shows use `MediaSummary` (type, title, year, Trakt ID);
+  only `search` returns slug, IMDb ID and overview, which help to pick the right
+  title. Class docstrings would become schema descriptions, so models are explained
+  in comments.
+
+`tests/test_tool_footprint.py` makes every change to the tool list visible; see
+"Context footprint" in `CLAUDE.md`.
 
 ## Reference
 

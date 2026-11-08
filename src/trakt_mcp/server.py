@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp_types import CallToolResult, InputRequiredResult, TextContent, Tool
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -21,6 +24,7 @@ from trakt_mcp import __version__
 from trakt_mcp.auth.provider import SCOPE, TraktAuthProvider
 from trakt_mcp.config import Settings
 from trakt_mcp.icons import home_page, icon_endpoint, load_icons, mcp_icons
+from trakt_mcp.schema import compact_schema
 from trakt_mcp.storage import Store
 from trakt_mcp.tools import SERVER_INSTRUCTIONS, register_tools
 from trakt_mcp.trakt.http import TraktApi, TraktOAuth, new_http_client
@@ -28,6 +32,41 @@ from trakt_mcp.trakt.service import TraktService
 from trakt_mcp.trakt.sessions import TraktSessions
 
 logger = logging.getLogger(__name__)
+
+
+class LeanMCPServer(MCPServer):
+    """An MCP server that spends as little of the assistant's context as possible.
+
+    - The tool list carries compacted schemas (see :mod:`trakt_mcp.schema`).
+    - A structured result's text copy (sent alongside ``structuredContent`` for
+      clients that only read text) is compact JSON instead of the SDK's
+      indented JSON; it holds exactly the same data.
+    """
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any], context: Any = None
+    ) -> CallToolResult | InputRequiredResult:
+        result = await super().call_tool(name, arguments, context)
+        if isinstance(result, CallToolResult) and result.structured_content is not None:
+            text = json.dumps(result.structured_content, ensure_ascii=False, separators=(",", ":"))
+            result = result.model_copy(update={"content": [TextContent(type="text", text=text)]})
+        return result
+
+    async def list_tools(self) -> list[Tool]:
+        return [
+            tool.model_copy(
+                update={
+                    "input_schema": compact_schema(tool.input_schema),
+                    "output_schema": (
+                        compact_schema(tool.output_schema, output=True)
+                        if tool.output_schema
+                        else None
+                    ),
+                }
+            )
+            for tool in await super().list_tools()
+        ]
+
 
 _SECURITY_HEADERS = (
     (b"x-content-type-options", b"nosniff"),
@@ -72,7 +111,7 @@ def build_app(
     sessions = TraktSessions(store, oauth)
     provider = TraktAuthProvider(settings, store, oauth, api, sessions)
 
-    server = MCPServer(
+    server = LeanMCPServer(
         name="trakt-mcp",
         title="Trakt",
         version=__version__,

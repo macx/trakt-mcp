@@ -101,7 +101,7 @@ async def test_add_get_and_remove_watchlist(mcp: McpSession, fake_trakt: FakeTra
         "Severance",
         "Arrival",
     ]  # newest first (fake adds movies first)
-    assert all(i["overview"] is None for i in watchlist["items"])
+    assert all("overview" not in i and "slug" not in i for i in watchlist["items"])
 
     only_shows = ok(await mcp.call("get_watchlist", type="show", limit=1))
     assert [i["title"] for i in only_shows["items"]] == ["Severance"]

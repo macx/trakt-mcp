@@ -34,8 +34,11 @@ Checklist before regenerating the snapshot:
 3. **Inputs:** as few parameters as possible, sensible defaults, enums instead
    of free text.
 4. **Outputs:** only fields the assistant needs to answer or to call the next
-   tool; reuse existing models; field descriptions only where a name is
-   ambiguous; long text is truncated (see `OVERVIEW_MAX_CHARS`).
+   tool; reuse existing models (`MediaSummary` for nested movies/shows); field
+   descriptions only where a name is ambiguous; long text is truncated (see
+   `OVERVIEW_MAX_CHARS`). Class docstrings become schema descriptions: explain
+   models in comments instead. Generic schema noise is stripped automatically
+   (`schema.py`, see "Context footprint" in `docs/architecture.md`).
 5. **Results at runtime:** small default `limit`s, never raw Trakt payloads.
 6. **Server instructions** only for rules that span several tools.
 7. Note the footprint before/after (chars from the test output) in the commit

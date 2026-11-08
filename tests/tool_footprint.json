@@ -2,81 +2,81 @@
   "_summary": {
     "tools": 12,
     "server_instructions": 834,
-    "total_chars": 23628,
-    "approx_tokens": 5907
+    "total_chars": 17986,
+    "approx_tokens": 4496
   },
   "tools": {
     "add_to_watchlist": {
       "description": 72,
-      "input_schema": 572,
-      "output_schema": 835,
-      "total": 1685
+      "input_schema": 381,
+      "output_schema": 530,
+      "total": 1189
     },
     "get_history": {
       "description": 126,
-      "input_schema": 316,
-      "output_schema": 1285,
-      "total": 1881
+      "input_schema": 254,
+      "output_schema": 988,
+      "total": 1522
     },
     "get_playback": {
       "description": 156,
-      "input_schema": 317,
-      "output_schema": 1588,
-      "total": 2220
+      "input_schema": 254,
+      "output_schema": 1233,
+      "total": 1802
     },
     "get_show_progress": {
       "description": 124,
-      "input_schema": 216,
-      "output_schema": 2158,
-      "total": 2656
+      "input_schema": 155,
+      "output_schema": 1337,
+      "total": 1774
     },
     "get_stats": {
       "description": 70,
-      "input_schema": 62,
-      "output_schema": 527,
-      "total": 811
+      "input_schema": 33,
+      "output_schema": 358,
+      "total": 613
     },
     "get_up_next": {
       "description": 192,
-      "input_schema": 144,
-      "output_schema": 1769,
-      "total": 2252
+      "input_schema": 97,
+      "output_schema": 1037,
+      "total": 1473
     },
     "get_watchlist": {
       "description": 79,
-      "input_schema": 297,
-      "output_schema": 1250,
-      "total": 1779
+      "input_schema": 233,
+      "output_schema": 659,
+      "total": 1124
     },
     "mark_watched": {
       "description": 231,
-      "input_schema": 1985,
-      "output_schema": 543,
-      "total": 2963
+      "input_schema": 1693,
+      "output_schema": 375,
+      "total": 2503
     },
     "remove_from_watchlist": {
       "description": 63,
-      "input_schema": 577,
-      "output_schema": 835,
-      "total": 1690
+      "input_schema": 381,
+      "output_schema": 530,
+      "total": 1189
     },
     "remove_playback": {
       "description": 190,
-      "input_schema": 283,
-      "output_schema": 314,
-      "total": 1008
+      "input_schema": 225,
+      "output_schema": 250,
+      "total": 886
     },
     "search": {
       "description": 78,
-      "input_schema": 525,
-      "output_schema": 816,
-      "total": 1575
+      "input_schema": 437,
+      "output_schema": 502,
+      "total": 1173
     },
     "unmark_watched": {
       "description": 224,
-      "input_schema": 1366,
-      "output_schema": 470,
-      "total": 2274
+      "input_schema": 1093,
+      "output_schema": 373,
+      "total": 1904
     }
   }
 }

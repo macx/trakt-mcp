@@ -1,3 +1,3 @@
 """trakt-mcp: a lean, self-hosted MCP server for Trakt."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
