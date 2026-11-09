@@ -1,0 +1,17 @@
+# Keeps the digest/SHA pins in the Dockerfile and workflows (and the lock file)
+# current. Updates arrive as pull requests and pass through CI like any change;
+# releasing them still needs a cleared security review.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 14 }
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 14 }
+  - package-ecosystem: uv
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 14 }

@@ -13,6 +13,11 @@ It fails unless
    after the review, but no unreviewed code can slip in), and
 3. ``compose.example.yml`` points at this version's ``major.minor`` image tag.
 
+The gate runs from the tagged commit, so it cannot protect against a tag on a
+commit that weakens the gate itself; that is what the GitHub tag rulesets are for
+(only admins create ``v*`` tags, none can be moved or deleted). It prevents
+mistakes, not a malicious maintainer.
+
 Standard library only, and Python 3.11+ compatible, so it runs on a bare runner.
 """
 
@@ -25,10 +30,10 @@ import tomllib
 from pathlib import Path
 
 REVIEWS = "docs/security-reviews.md"
-# | 0.4.2 | 2026-11-09 | scope | **cleared** (reviewed commit `abc1234`) |
+# | 0.4.2 | 2026-11-09 | scope | **cleared** (reviewed commit `<full 40-char SHA>`) |
 _ROW = re.compile(
     r"^\|\s*(?P<version>[0-9][^|\s]*)\s*\|[^\n]*?\|\s*\*\*cleared\*\*\s*"
-    r"\(reviewed commit `(?P<sha>[0-9a-f]{7,40})`\)\s*\|\s*$",
+    r"\(reviewed commit `(?P<sha>[0-9a-f]{40})`\)\s*\|\s*$",
     re.MULTILINE,
 )
 _IMAGE = re.compile(r"^\s*image:\s*ghcr\.io/[^\s:]+:(?P<tag>\S+)\s*$", re.MULTILINE)
@@ -79,13 +84,18 @@ def check(root: Path, tag: str) -> str:
             f"{REVIEWS} does not mark {version} as cleared. Every release needs an "
             "independent security review first (CLAUDE.md, 'Releases')."
         )
-    reviewed = git(root, "rev-parse", "--verify", f"{sha}^{{commit}}")
+    # A full SHA, resolved as an object (never as a ref: a tag named like a short
+    # SHA would otherwise win) and checked to be exactly the recorded commit.
+    reviewed = git(root, "rev-parse", "--verify", "--end-of-options", f"{sha}^{{commit}}")
+    if reviewed != sha:
+        raise ReleaseError(f"Reviewed commit {sha} resolves to {reviewed}.")
     head = git(root, "rev-parse", "HEAD")
     try:
         git(root, "merge-base", "--is-ancestor", reviewed, head)
     except ReleaseError:
         raise ReleaseError(f"Reviewed commit {sha} is not an ancestor of {tag}.") from None
-    changed = set(filter(None, git(root, "diff", "--name-only", reviewed, head).splitlines()))
+    diff = git(root, "diff", "--name-only", "--no-renames", reviewed, head)
+    changed = set(filter(None, diff.splitlines()))
     if changed - {REVIEWS}:
         raise ReleaseError(
             f"Files changed after the reviewed commit {sha}: {', '.join(sorted(changed))}. "

@@ -88,13 +88,17 @@ cp .env.example .env   # fill in TRAKT_CLIENT_ID, PUBLIC_URL, ALLOWED_TRAKT_USER
 docker compose -f compose.example.yml up -d
 ```
 
-Images are tagged `0.4.2` and `0.4` (no `latest`; pin a version or, better, the digest
-from the [release notes](https://github.com/macx/trakt-mcp/releases)). Each image
-carries a build provenance attestation, so you can check that it was built from the
-tagged source by this repository's release workflow:
+Images are tagged `X.Y.Z` and `X.Y` (no `latest`). Tags can be re-pushed, so for
+production pin the **digest** from the [release notes](https://github.com/macx/trakt-mcp/releases)
+(`image: ghcr.io/macx/trakt-mcp@sha256:…`). Each image carries a build provenance
+attestation; check that this digest was built from the release tag by this
+repository's release workflow:
 
 ```sh
-gh attestation verify oci://ghcr.io/macx/trakt-mcp:0.4.2 --repo macx/trakt-mcp
+gh attestation verify oci://ghcr.io/macx/trakt-mcp@sha256:<digest> \
+  --repo macx/trakt-mcp \
+  --signer-workflow macx/trakt-mcp/.github/workflows/release.yml \
+  --source-ref refs/tags/vX.Y.Z
 ```
 
 Put it behind a TLS-terminating reverse proxy (see `compose.example.yml` for Caddy).

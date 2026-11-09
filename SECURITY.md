@@ -58,3 +58,30 @@ paused playbacks can be changed) and their Trakt tokens.
 - One browser can run only one sign-in at a time (the sign-in cookie is shared);
   starting a second one cancels the first.
 - The sign-in, consent and OAuth endpoints are public by design.
+
+## Release integrity
+
+What you pull from `ghcr.io/macx/trakt-mcp` is built only by
+`.github/workflows/release.yml`, on a pushed `vX.Y.Z` tag, after:
+
+- the full CI checks (lint, strict typing, tests with coverage gate, bandit,
+  pip-audit) pass on the tagged commit, and
+- `scripts/check_release.py` confirms the tag matches the project version and
+  `docs/security-reviews.md` records an independent security review that cleared
+  this version for a full commit SHA, with nothing but that record changed since.
+
+Hardening: actions and base images pinned by digest (updated by Dependabot),
+least-privilege job permissions, no persisted credentials, no caches in the
+release path, a build provenance attestation per image (verify with
+`--signer-workflow` and `--source-ref`, see the README), and no `latest` tag.
+
+Limits, by design:
+
+- The gate runs from the tagged commit. A tag on a commit that changes the
+  workflow or the gate itself would bypass it; what prevents that are the GitHub
+  tag rulesets (only admins create `v*` tags; none can be moved or deleted). The
+  gate catches mistakes, not a malicious maintainer.
+- Re-running a failed release rebuilds the image; its digest may differ from an
+  earlier attempt. Deploy the digest from the published release notes.
+- Any workflow with `packages: write` could push to the package; only the
+  maintainer can add or change workflows.

@@ -64,7 +64,7 @@ def repo(tmp_path: Path) -> Repo:
 def cleared(sha: str, version: str = "0.4.2") -> str:
     return (
         "| Version | Date | Scope | Result |\n|---|---|---|---|\n"
-        f"| {version} | 2026-11-09 | `a..b` | **cleared** (reviewed commit `{sha[:7]}`) |\n"
+        f"| {version} | 2026-11-09 | `a..b` | **cleared** (reviewed commit `{sha}`) |\n"
     )
 
 
@@ -139,8 +139,44 @@ def test_reviewed_commit_must_be_an_ancestor(repo: Repo) -> None:
 
 
 def test_unknown_reviewed_commit_blocks(repo: Repo) -> None:
-    root = repo({REVIEWS: cleared("deadbee")})
+    root = repo({REVIEWS: cleared("deadbeef" * 5)})
     with pytest.raises(release.ReleaseError, match="rev-parse"):
+        release.check(root, "v0.4.2")
+
+
+def test_short_sha_is_not_accepted(repo: Repo) -> None:
+    root = repo()
+    sha = run_git(root, "rev-parse", "HEAD")
+    repo({REVIEWS: cleared(sha).replace(sha, sha[:7])})
+    with pytest.raises(release.ReleaseError, match="does not mark"):
+        release.check(root, "v0.4.2")
+
+
+def test_a_ref_named_like_the_reviewed_sha_cannot_redirect_the_check(repo: Repo) -> None:
+    root = repo()
+    reviewed = run_git(root, "rev-parse", "HEAD")
+    run_git(root, "checkout", "-q", "-b", "side")
+    unreviewed = run_git(repo({"src/trakt_mcp/code.py": "evil = 1\n"}), "rev-parse", "HEAD")
+    run_git(root, "checkout", "-q", "main")
+    # Refs literally named like the reviewed SHA, pointing at unreviewed code.
+    run_git(root, "update-ref", f"refs/tags/{reviewed}", unreviewed)
+    run_git(root, "update-ref", f"refs/heads/{reviewed}", unreviewed)
+    repo({REVIEWS: cleared(reviewed)})
+    # The gate still compares against the reviewed object itself, not the refs.
+    assert release.check(root, "v0.4.2").endswith(f"cleared at {reviewed}.")
+    assert (
+        release.git(root, "rev-parse", "--verify", "--end-of-options", f"{reviewed}^{{commit}}")
+        == reviewed
+    )
+
+
+def test_renaming_code_onto_another_path_is_still_seen(repo: Repo) -> None:
+    root = repo({"src/trakt_mcp/guard.py": "def guard() -> None: ...\n"})
+    reviewed = run_git(root, "rev-parse", "HEAD")
+    run_git(root, "mv", "src/trakt_mcp/guard.py", "docs/other.md")
+    run_git(root, "config", "diff.renames", "true")
+    repo({REVIEWS: cleared(reviewed)})
+    with pytest.raises(release.ReleaseError, match=r"src/trakt_mcp/guard\.py"):
         release.check(root, "v0.4.2")
 
 

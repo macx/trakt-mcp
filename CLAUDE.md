@@ -97,7 +97,7 @@ a pushed tag `vX.Y.Z` and publishes only if every gate passes. The steps:
    `SECURITY.md`, not our own conclusions. Fix the findings (with tests) and have
    the fixes re-checked. Workflow and script changes are in scope too.
 4. Record it in `docs/security-reviews.md`:
-   `| X.Y.Z | date | scope | **cleared** (reviewed commit `<sha>`) |`, commit, and
+   `| X.Y.Z | date | scope | **cleared** (reviewed commit `<full 40-char sha>`) |`, commit, and
    tag that commit `vX.Y.Z`. `scripts/check_release.py` rejects the tag if the
    versions differ, the row is missing, or anything but the review record changed
    since the reviewed commit.
@@ -106,7 +106,10 @@ a pushed tag `vX.Y.Z` and publishes only if every gate passes. The steps:
    provenance attestation, and creates the GitHub release with the digest.
 
 Deployments use that published image by digest, never a local build. Tags `v*`
-are protected on GitHub (no moving or deleting).
+are protected on GitHub (only admins create them; none can be moved or deleted).
+The gate runs from the tagged commit, so it prevents mistakes, not a malicious
+maintainer - see "Release integrity" in `SECURITY.md`. A failed release is never
+fixed by moving the tag: bump the patch version.
 
 ## Gotchas
 
