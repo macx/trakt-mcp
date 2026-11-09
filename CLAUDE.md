@@ -71,10 +71,10 @@ Checklist before regenerating the snapshot:
 Every change must pass, locally and in CI:
 
 ```sh
-uv run ruff check src tests && uv run ruff format --check src tests
-uv run mypy                         # strict
+uv run ruff check src tests scripts && uv run ruff format --check src tests scripts
+uv run mypy && uv run mypy --strict scripts/check_release.py
 uv run pytest --cov                 # coverage gate: 90 %
-uv run bandit -q -c pyproject.toml -r src
+uv run bandit -q -c pyproject.toml -r src scripts
 uv export --no-dev --no-emit-project --format requirements-txt > /tmp/req.txt && uv run pip-audit -r /tmp/req.txt
 ```
 
@@ -85,17 +85,28 @@ check request/response shapes against Trakt's official contracts at
 
 ## Releases
 
-Every new version (bump `pyproject.toml` and `src/trakt_mcp/__init__.py`, then
-`uv lock`) needs, before it is deployed:
+Releases are gated by CI, not by convention: `.github/workflows/release.yml` runs on
+a pushed tag `vX.Y.Z` and publishes only if every gate passes. The steps:
 
-1. All workflow checks green, locally and in CI.
-2. An **independent adversarial security review** of the diff since the last
-   cleared version: a reviewer that gets the diff, the code and `SECURITY.md`, not
-   our own conclusions. Fix the findings (with tests), and have the fixes re-checked.
-3. An entry in `docs/security-reviews.md` marking the version *cleared*, and a git
-   tag `vX.Y.Z` on the reviewed commit.
+1. Bump `pyproject.toml` and `src/trakt_mcp/__init__.py`, `uv lock`; if the minor
+   version changed, update the image tag in `compose.example.yml` (and the version
+   examples in the README).
+2. All workflow checks green, locally and in CI.
+3. An **independent adversarial security review** of the diff since the last
+   cleared version: a fresh reviewer that gets the diff, the code and
+   `SECURITY.md`, not our own conclusions. Fix the findings (with tests) and have
+   the fixes re-checked. Workflow and script changes are in scope too.
+4. Record it in `docs/security-reviews.md`:
+   `| X.Y.Z | date | scope | **cleared** (reviewed commit `<sha>`) |`, commit, and
+   tag that commit `vX.Y.Z`. `scripts/check_release.py` rejects the tag if the
+   versions differ, the row is missing, or anything but the review record changed
+   since the reviewed commit.
+5. Push the tag. The workflow reruns all checks, builds the image for amd64 and
+   arm64, pushes it to `ghcr.io/macx/trakt-mcp` (`X.Y.Z`, `X.Y`) with a build
+   provenance attestation, and creates the GitHub release with the digest.
 
-Only versions marked cleared there may be deployed.
+Deployments use that published image by digest, never a local build. Tags `v*`
+are protected on GitHub (no moving or deleting).
 
 ## Gotchas
 

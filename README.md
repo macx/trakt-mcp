@@ -80,9 +80,21 @@ can always sign in; add other people to the app's sign-in list on Trakt if neede
 
 ### 2. Run it
 
+Every release publishes a container image for `linux/amd64` and `linux/arm64` -
+no build needed:
+
 ```sh
 cp .env.example .env   # fill in TRAKT_CLIENT_ID, PUBLIC_URL, ALLOWED_TRAKT_USERS
-docker compose -f compose.example.yml up -d --build
+docker compose -f compose.example.yml up -d
+```
+
+Images are tagged `0.4.2` and `0.4` (no `latest`; pin a version or, better, the digest
+from the [release notes](https://github.com/macx/trakt-mcp/releases)). Each image
+carries a build provenance attestation, so you can check that it was built from the
+tagged source by this repository's release workflow:
+
+```sh
+gh attestation verify oci://ghcr.io/macx/trakt-mcp:0.4.2 --repo macx/trakt-mcp
 ```
 
 Put it behind a TLS-terminating reverse proxy (see `compose.example.yml` for Caddy).
@@ -127,10 +139,14 @@ read-only root filesystem and keeps its state in the `/data` volume (~50 MB RAM)
 ```sh
 uv sync
 uv run pytest --cov          # tests (against an in-memory fake Trakt)
-uv run ruff check src tests && uv run ruff format --check src tests
+uv run ruff check src tests scripts && uv run ruff format --check src tests scripts
 uv run mypy                  # strict
-uv run bandit -c pyproject.toml -r src
+uv run bandit -c pyproject.toml -r src scripts
 ```
+
+Releases are cut by pushing a tag `vX.Y.Z`; the release workflow only publishes if
+all checks pass and [`docs/security-reviews.md`](docs/security-reviews.md) records an
+independent security review clearing that version (see `scripts/check_release.py`).
 
 Run locally: create a `.env` with `PUBLIC_URL=http://localhost:8000`, `HOST=127.0.0.1`
 and `DATA_DIR=./data`, then `uv run trakt-mcp`.

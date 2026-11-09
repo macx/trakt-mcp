@@ -1,12 +1,14 @@
 # Security reviews
 
 Every release gets an independent adversarial security review of the diff since the
-last cleared release **before it is deployed** (see "Releases" in `CLAUDE.md`). Only
-versions marked *cleared* here may be deployed.
+last cleared release (see "Releases" in `CLAUDE.md`). The release workflow enforces
+it: `scripts/check_release.py` only lets a tag `vX.Y.Z` through if a row below reads
+`| X.Y.Z | … | **cleared** (reviewed commit `<sha>`) |` and nothing but this file
+changed between that commit and the tag.
 
 | Version | Date | Scope (diff) | Result |
 |---|---|---|---|
-| 0.4.1 | 2026-11-08 | `f0c74a3..v0.4.1` (0.2.1 → 0.4.1: playback tools, `LeanMCPServer`, schema compaction, `MediaSummary`) | **cleared** (tag `v0.4.1` = `4fcf3b1`) |
+| 0.4.1 | 2026-11-08 | `f0c74a3..v0.4.1` (0.2.1 → 0.4.1: playback tools, `LeanMCPServer`, schema compaction, `MediaSummary`) | **cleared** (reviewed commit `4fcf3b1`) |
 
 ## 0.2.1 → 0.4.1 (2026-11-08)
 

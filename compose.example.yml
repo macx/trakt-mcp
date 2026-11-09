@@ -2,8 +2,10 @@
 # No port is published: only the proxy, on the same Docker network, reaches it.
 services:
   trakt-mcp:
-    image: trakt-mcp:latest
-    build: .
+    # Released images are built and attested by the release workflow; pin a version
+    # (or a digest from the release notes). To build from source instead, replace
+    # this line with `build: .`.
+    image: ghcr.io/macx/trakt-mcp:0.4
     container_name: trakt-mcp
     restart: unless-stopped
     env_file: .env
