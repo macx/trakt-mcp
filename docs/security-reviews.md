@@ -8,7 +8,38 @@ changed between that commit and the tag.
 
 | Version | Date | Scope (diff) | Result |
 |---|---|---|---|
+| 0.4.2 | 2026-11-09 | `4fcf3b1..9beb5f9` (CI release pipeline, release gate, GHCR image, pinned base images, Dependabot) | **cleared** (reviewed commit `9beb5f9ec70352b16be0aa3b9b16abcfea32b252`) |
 | 0.4.1 | 2026-11-08 | `f0c74a3..v0.4.1` (0.2.1 → 0.4.1: playback tools, `LeanMCPServer`, schema compaction, `MediaSummary`) | **cleared** (reviewed commit `4fcf3b1b903f717dcca00670144faa26ae01d6bb`) |
+
+## 0.4.1 → 0.4.2 (2026-11-09)
+
+Reviewer: a fresh independent agent (no part in earlier reviews), given only the
+diff, the code and `SECURITY.md`. First verdict on `8fba3a3`: **not cleared**.
+
+1. **Medium** - a `latest` image tag was published (metadata-action default)
+   although the README said otherwise; a backport release would have moved it
+   backwards. Fixed: `flavor: latest=false`.
+2. **Low** - caches in the release path (qemu `cache-image` default) and unpinned
+   builder images. Fixed: cache off; binfmt and buildkit pinned by digest.
+3. **Low** - the gate accepted short SHAs resolved like refs, so a tag named like
+   the recorded SHA could redirect the comparison to unreviewed code. Fixed: full
+   40-char SHA only, `--end-of-options`, resolved commit must equal the record;
+   tests with refs named like the SHA.
+4. **Low** - the documented verification (`--repo` only, by mutable tag) proved
+   less than claimed. Fixed: verify the digest with `--signer-workflow` and
+   `--source-ref`, and pull by that digest.
+5. **Low** - base images not pinned. Fixed: python and uv pinned by digest,
+   Dependabot for actions, images and `uv.lock`.
+6. **Info** - `git diff` rename detection. Fixed: `--no-renames`, with a test.
+
+Re-review of the fixes (patch SHA-256 `73670190…6120`, committed unchanged as
+`9beb5f9`): all fixed, nothing weakened. **Verdict: cleared.**
+
+Accepted residuals: the gate runs from the tagged commit and cannot protect
+against a commit that weakens it (the tag rulesets do; see "Release integrity" in
+`SECURITY.md`); a re-run release may produce a different digest; `./` instead of
+`$/` for the reusable workflow (style); the binfmt and buildkit digests in
+`release.yml` are not updated by Dependabot and need manual bumps.
 
 ## 0.2.1 → 0.4.1 (2026-11-08)
 
